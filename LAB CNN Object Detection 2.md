@@ -41,8 +41,6 @@ Expected Outcome and Evaluation
 
 ### Requirement
 
-Write a list of HW/SW requirements
-
 #### Hardware
 
 - **CPU**: Intel Core i9-13980HX @ 2.20 GHz  
@@ -53,30 +51,15 @@ Write a list of HW/SW requirements
 #### Software Installation
 
 - **Python**: 3.11.12
-
 - **PyTorch**: 2.5.1 (CUDA 12.1)
-
 - **Torchvision**: 0.20.1
-
 - **Torchaudio**: 2.5.1
-
 - **OpenCV (opencv-python)**: 4.11.0.86
-
 - **NumPy**: 2.2.6
-
 - **timm**: 1.0.15
-
 - **tqdm**: 4.67.1
-
 - **CUDA Runtime**: 12.1.0
   
-  
-  
-- **pip**: 25.1.1
-
-- **setuptools**: 80.8.0
-
-- **wheel**: 0.45.1
 
 ### Dataset
 
