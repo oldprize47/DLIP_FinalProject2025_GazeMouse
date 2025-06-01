@@ -1,30 +1,41 @@
 # LAB: CNN Object Detection 2
 
-
-
 ## LAB: Eye tracking
 
 
 
 ### Introduction
 
-시선 추적 배경~~~
+With the recent advancements in AR/VR technologies, interest has grown in gaze-based control systems that function without dedicated hardware.
 
-그래서 시선 추적 성능을 다양한 모델로 향상시켜 보겠다. 
+**Goal**
+
+The goal of this project is to use a laptop’s built-in webcam to determine the user’s gaze and place the mouse pointer at the desired location based on that gaze. Existing solutions date back five or six years or are available only as applications without publicly available source code. Consequently, we plan to implement this system ourselves using the most up-to-date deep learning models possible.
 
 ### Problem Statement
 
 Project objectives
-기존 모델들에서 보여지는 문제점. 
 
-- 시선에 따른 스크린 포인터 추적률(시선에 따라 스크린에 얼마나 잘 표현이 되는지.)
-  - 카메라 위치를 고정적으로 가져가야함.
-- 시선 추적 트레킹 프레임
+- Enable gaze-based mouse control using only a laptop’s built-in webcam, without any specialized hardware.
+
+- Improve upon models from five to six years ago by achieving both faster response time and higher accuracy.
 
 Expected Outcome and Evaluation
 
-- 인풋은 크롭된 이미지
-- 아웃풋 : 모니터 센터 기준 좌표 
+**Cursor Accuracy**
+
+- The mouse pointer should accurately appear at the exact screen location corresponding to the user’s gaze.
+- A left-eye blink should trigger a left-click, and a right-eye blink should trigger a right-click.
+
+**Quantitative Evaluation (MPIIGaze Test Set)**
+
+- Split the MPIIGaze dataset into training, validation, and test subsets.
+- Achieve a mean squared error (MSE) on the test set of **0.02 or lower** (normalized coordinate units).
+- Maintain an inference speed of **30 frames per second (FPS) or higher** during real-time operation.
+
+**User-Centric Evaluation**
+
+- When an actual user performs gaze-based pointing and clicking, the cursor must follow the gaze with minimal lag and high precision, yielding a fluid, intuitive experience.
 
 ------
 
@@ -32,41 +43,56 @@ Expected Outcome and Evaluation
 
 Write a list of HW/SW requirements
 
-#### Hardware List
+#### Hardware
 
-- Jetson Nano
-- Webcam
+- **CPU**: Intel Core i9-13980HX @ 2.20 GHz  
+- **GPU**: NVIDIA GeForce RTX 4080 (CUDA 12.1 support)  
+- **RAM**: 64 GB DDR5 @ 5600 MHz (2 × 32 GB Micron modules)  
+- **Webcam**: Integrated Camera – 1280 × 720 @ 30 fps 
 
 #### Software Installation
 
-- CUDA 10.1
-- cudatoolkit 10.1
-- Python 3.8.5
-- Pytorch 1.6.0
-- Torchvision==0.7.0
-- YOLO v5
+- **Python**: 3.11.12
+
+- **PyTorch**: 2.5.1 (CUDA 12.1)
+
+- **Torchvision**: 0.20.1
+
+- **Torchaudio**: 2.5.1
+
+- **OpenCV (opencv-python)**: 4.11.0.86
+
+- **NumPy**: 2.2.6
+
+- **timm**: 1.0.15
+
+- **tqdm**: 4.67.1
+
+- **CUDA Runtime**: 12.1.0
+  
+  
+  
+- **pip**: 25.1.1
+
+- **setuptools**: 80.8.0
+
+- **wheel**: 0.45.1
 
 ### Dataset
 
-Description of dataset goes here
+**MPIIGaze** is a large-scale, real-world gaze dataset collected from 15 participants using their own laptop webcams. It contains over 200,000 grayscale eye‐patch images (36×60 pixels) paired with normalized screen‐coordinate gaze labels (x,y) and head‐pose angles (pitch, yaw). Images were captured while users looked at randomized points on their screens under varying lighting and head positions. MPIIGaze enables training and evaluation of appearance‐based gaze estimation models that generalize to uncontrolled environments.
 
-**Dataset link:** download here
+**Dataset link:** [MPIIGaze (kaggle)](https://www.kaggle.com/datasets/dhruv413/mpiigaze/data) 
 
 ------
 
 ### Method
 
-Explain briefly how you have implemented the project.
 
-- Explain how you have done preprocessings
-- Explain the deep learning models you have used
-- Explain how you have tested for evaluation
 
 ------
 
 ### Procedure
-
-Explain the whole procedure step by step with proper headings and images.
 
 #### Installation
 
@@ -76,12 +102,4 @@ Explain the whole procedure step by step with proper headings and images.
 
 ### Results and Analysis
 
-Show the final results visually (images, graph, table etc)
-
-Analyze the results in terms of accuracy/precision/recall etc..
-
-Explain wheather you have achieved the project objectives
-
 ### Reference
-
-Complete list of all references used (github, blog, paper, etc)
