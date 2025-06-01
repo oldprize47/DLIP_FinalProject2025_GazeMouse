@@ -27,10 +27,10 @@ Expected Outcome and Evaluation
 - The mouse pointer should accurately appear at the exact screen location corresponding to the user’s gaze.
 - A left-eye blink should trigger a left-click, and a right-eye blink should trigger a right-click.
 
-**Quantitative Evaluation (MPIIGaze Test Set)**
+**Quantitative Evaluation (RT-Gene Test Set)**
 
-- Split the MPIIGaze dataset into training, validation, and test subsets.
-- Achieve a mean squared error (MSE) on the test set of **0.02 or lower** (normalized coordinate units).
+- Split the RT-Gene dataset into training, validation, and test subsets.
+- Achieve an **L1 loss below 0.108** (i.e., below approximately 6.2°) on the test set.
 - Maintain an inference speed of **30 frames per second (FPS) or higher** during real-time operation.
 
 **User-Centric Evaluation**
@@ -52,20 +52,15 @@ Expected Outcome and Evaluation
 
 - **Python**: 3.11.12
 - **PyTorch**: 2.5.1 (CUDA 12.1)
-- **Torchvision**: 0.20.1
-- **Torchaudio**: 2.5.1
 - **OpenCV (opencv-python)**: 4.11.0.86
 - **NumPy**: 2.2.6
-- **timm**: 1.0.15
-- **tqdm**: 4.67.1
-- **CUDA Runtime**: 12.1.0
-  
 
 ### Dataset
 
-**MPIIGaze** is a large-scale, real-world gaze dataset collected from 15 participants using their own laptop webcams. It contains over 200,000 grayscale eye‐patch images (36×60 pixels) paired with normalized screen‐coordinate gaze labels (x,y) and head‐pose angles (pitch, yaw). Images were captured while users looked at randomized points on their screens under varying lighting and head positions. MPIIGaze enables training and evaluation of appearance‐based gaze estimation models that generalize to uncontrolled environments.
+**RT-Gene** (Real-Time Gaze Estimation in Natural Environments) consists of around **92,000 face images** captured from 15 participants using standard webcams in an office/lab setting. Each participant performed typical desk tasks (reading, typing, looking around), resulting in varying lighting conditions, head poses (±40° yaw, ±40° pitch), and natural facial expressions. RT-Gene supplies RGB frames (cropped and resized to 224×224×3) paired with **2D gaze targets** (screen coordinates) and **3D head-pose angles** (Euler yaw, pitch). This “in-the-wild” indoor dataset allows evaluation of gaze models under more realistic conditions than strictly controlled lab data.
 
-**Dataset link:** [MPIIGaze (kaggle)](https://www.kaggle.com/datasets/dhruv413/mpiigaze/data) 
+**Dataset link:**
+ [RT-Gene on Zenodo](https://zenodo.org/records/2529036)
 
 ------
 
