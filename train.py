@@ -1,4 +1,4 @@
-# 파일명: train_clean_resume.py
+# 파일명: train.py
 
 import os
 import torch
@@ -12,6 +12,14 @@ from fginet import FGINet
 from tqdm import tqdm
 from torch.optim.lr_scheduler import LambdaLR, CyclicLR
 import random, numpy as np
+import argparse, sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars.")
+args = parser.parse_args()
+
+# 터미널 여부(TTY) + --no-progress 둘 중 하나라도 False이면 진행바 OFF
+use_progress_bar = sys.stderr.isatty() and not args.no_progress
 
 seed = 42
 random.seed(seed)
@@ -25,7 +33,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device, use_clr=False, 
     running_loss = 0.0
 
     # ─── Warm-up이나 CLR에 상관없이, 오직 배치 진행바만 돌립니다. ───
-    loop = tqdm(loader, desc="  [Train]", leave=False)
+    loop = tqdm(loader, desc="  [Train]", leave=False, disable=not use_progress_bar)  # ← 여기만 바뀜
     for images, labels in loop:
         images = images.to(device)
         labels = labels.to(device)
