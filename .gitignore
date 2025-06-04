@@ -1,2 +1,5 @@
 **/mpiigaze
 *.pt
+*.pth
+**.png
+**/RT_GENE
