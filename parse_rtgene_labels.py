@@ -1,10 +1,12 @@
 # 파일명: parse_rtgene_labels.py
 
+import re
+
 
 def parse_label_combined(label_file_path):
     """
     label_combined.txt를 읽어서,
-    각 줄에서 (index, eye_pitch, eye_yaw)를 반환.
+    각 줄에서 (index, head_pitch, head_yaw, eye_pitch, eye_yaw)를 반환.
     """
     gaze_list = []
     with open(label_file_path, "r") as f:
@@ -13,33 +15,26 @@ def parse_label_combined(label_file_path):
             if not line:
                 continue
 
-            # 예시 라인:
-            # 1, [0.164865454117, -0.29910425524], [-0.119121529839, 0.162986524399], 1504190788.51
-            parts = line.split(",", maxsplit=3)
-            # parts = ["1", " [0.164865454117", " -0.29910425524]", " [-0.119121529839, 0.162986524399], 1504190788.51"]
-
-            # 1) index 추출
-            idx_str = parts[0].strip()
+            # 1) index
             try:
-                idx = int(idx_str)
-            except ValueError:
-                continue  # 숫자로 변환되지 않으면 건너뜀
-
-            # 2) “eye gaze” 부분 추출
-            #    parts[3] 에서 대괄호 안의 eye pitch, yaw만 가져옴
-            rest = parts[3].strip()  # e.g. "[-0.119121529839, 0.162986524399], 1504190788.51"
-            if "]" not in rest:
-                continue
-            eye_str = rest.split("]")[0]  # "[-0.119121529839, 0.162986524399"
-            eye_str = eye_str.strip().lstrip("[").strip()  # "-0.119121529839, 0.162986524399"
-
-            eye_pitch_str, eye_yaw_str = [x.strip() for x in eye_str.split(",")]
-            try:
-                eye_pitch = float(eye_pitch_str)
-                eye_yaw = float(eye_yaw_str)
-            except ValueError:
+                idx = int(line.split(",", 1)[0])
+            except:
                 continue
 
-            gaze_list.append((idx, (eye_pitch, eye_yaw)))
+            # 2) 대괄호 안의 두 쌍: 첫째=[head_pitch,head_yaw], 둘째=[eye_pitch,eye_yaw]
+            matches = re.findall(r"\[([^\]]+)\]", line)
+            if len(matches) < 2:
+                continue
+
+            head_str = matches[0]  # e.g. "0.164865454117, -0.29910425524"
+            eye_str = matches[1]  # e.g. "-0.119121529839, 0.162986524399"
+
+            try:
+                head_pitch, head_yaw = [float(x) for x in head_str.split(",")]
+                eye_pitch, eye_yaw = [float(x) for x in eye_str.split(",")]
+            except:
+                continue
+
+            gaze_list.append((idx, head_pitch, head_yaw, eye_pitch, eye_yaw))
 
     return gaze_list

@@ -17,7 +17,7 @@ class Stage2_GIFModule(nn.Module):
         # ─────────────────────────────────────────────────
         self.efficient_feats = create_model(
             "efficientnet_b0",
-            pretrained=False,
+            pretrained=True,
             features_only=True,
             out_indices=(2,),  # EfficientNet stage2 feature (28×28)
         )
@@ -32,7 +32,7 @@ class Stage2_GIFModule(nn.Module):
         # ─────────────────────────────────────────────────
         self.swin_feats = create_model(
             "swin_tiny_patch4_window7_224",
-            pretrained=False,
+            pretrained=True,
             features_only=True,
             out_indices=(1,),  # SwinTiny stage1 feature (28×28)
         )

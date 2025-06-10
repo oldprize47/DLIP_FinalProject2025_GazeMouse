@@ -1,218 +1,121 @@
-#!/usr/bin/env python
-"""train_fgi_net.py — One‑file trainer for FGI‑Net on original MPIIGaze.
-Run:
-    python train_fgi_net.py
-Override hyper‑params via env, e.g.:
-    EPOCHS=60 LR=1e-4 python train_fgi_net.py
-Defaults → 20‑epoch smoke‑test on a single GPU.
-"""
-import math, os, random, time, warnings
-from pathlib import Path
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+# 파일: train_eyes.py
+import os, time, random, json, numpy as np, torch, torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
-from PIL import Image
 from tqdm import tqdm
 
-warnings.filterwarnings("ignore", category=FutureWarning, module="torch")  # suppress AMP deprecation chatter
+from eye_dataset_file import RTGENDatasetEyes  # 얼굴+눈 데이터
+from fginet_eyes import FGINetEyes  # 새 모델
 
-try:
-    from timm.models.swin_transformer import SwinTransformer
-except ImportError:
-    raise SystemExit("[error] timm 0.9+ required → pip install timm -U")
+# ── 설정 ────────────────────────────────────────────────
+CSV_PATH = "RT_GENE/rtgene_pairs_face_eye.csv"
+BATCH_SIZE = 32
+EPOCHS = 40
+SPLIT = (0.8, 0.1, 0.1)  # train:val:test
+SEED = 42
+CKPT_BEST = "best_fgineteyes.pth"
+SPLIT_JSON = "split_indices.json"
 
-# ── Hyper‑parameters (env‑override) ─────────────────────
-ROOT = Path(os.getenv("ROOT", Path(__file__).parent / "mpiigaze")).expanduser()
-EPOCHS = int(os.getenv("EPOCHS", 50))
-BATCH = int(os.getenv("BATCH", 256))
-SPLIT = float(os.getenv("SPLIT", 0.1))
-LR = float(os.getenv("LR", 2e-5))
-NUM_WORKERS = int(os.getenv("NUM_WORKERS", 8))
-USE_AMP = os.getenv("AMP", "1") != "0"  # default ON
+LR_NEW = 1e-4  # 눈 브랜치
+LR_BACKBONE = 3e-5  # 백본(6 epoch 이후)
 
-IMAGE_EXTS = (".jpg", ".png", ".jpeg", ".JPG")
-
-# ── Helper functions ───────────────────────────────────
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ------------------------------------------------------
 
 
-def find_image(day: Path, idx: int) -> Path:
-    """Find image whose numeric stem equals idx or idx+1."""
-    cand = {idx, idx + 1}
-    stems = [f"{n:0{d}d}" for n in cand for d in (3, 4, 5)]
-    stems += [f"frame_{n:04d}" for n in cand] + [f"image_{n:04d}" for n in cand]
-    for ext in IMAGE_EXTS:
-        for s in stems:
-            p = day / f"{s}{ext}"
-            if p.exists():
-                return p.relative_to(ROOT)
-    for f in day.iterdir():
-        if f.suffix.lower() in IMAGE_EXTS and f.stem.isdigit() and int(f.stem) in cand:
-            return f.relative_to(ROOT)
-    raise FileNotFoundError(idx)
+def angular_loss(pred, gt, eps=1e-6):
+    gx, gy = torch.sin(pred[:, 0]), torch.sin(pred[:, 1])
+    gz = torch.cos(pred[:, 0]) * torch.cos(pred[:, 1])
+    vx, vy = torch.sin(gt[:, 0]), torch.sin(gt[:, 1])
+    vz = torch.cos(gt[:, 0]) * torch.cos(gt[:, 1])
+    return torch.acos((gx * vx + gy * vy + gz * vz).clamp(-1 + eps, 1 - eps)).mean()
 
 
-def build_index():
-    pairs = []
-    for ann in ROOT.glob("p??/day??/annotation.txt"):
-        day = ann.parent
-        with ann.open() as fh:
-            for idx, line in enumerate(fh):
-                vals = line.split()
-                if len(vals) < 41:
-                    continue
-                rel = find_image(day, idx)
-                Gx, Gy, Gz = map(float, vals[26:29])
-                Rx, Ry, Rz = map(float, vals[35:38])
-                dx, dy, dz = Gx - Rx, Gy - Ry, Gz - Rz
-                norm = math.sqrt(dx * dx + dy * dy + dz * dz) + 1e-8
-                yaw = math.atan2(dx, dz)
-                pitch = math.asin(-dy / norm)
-                pairs.append((str(rel), pitch, yaw))
-    random.shuffle(pairs)
-    cut = int(len(pairs) * (1 - SPLIT))
-    return pairs[:cut], pairs[cut:]
+def loss_fn(pred, gt):
+    head = nn.functional.l1_loss(pred[:, :2], gt[:, :2])
+    gaze = angular_loss(pred[:, 2:], gt[:, 2:])
+    return head + 2.0 * gaze
 
 
-# ── Dataset ─────────────────────────────────────────────
-class GazeDS(Dataset):
-    def __init__(self, tuples, aug=False):
-        base = [
-            transforms.Resize((72, 120)),
-            transforms.Pad((0, 24, 0, 24), fill=128),
-            transforms.Grayscale(3),
-            transforms.ToTensor(),
-        ]
-        if aug:
-            self.tfm = transforms.Compose(
-                [
-                    transforms.RandomRotation(8, fill=128),
-                    transforms.ColorJitter(0.2, 0.2),
-                    *base,
-                ]
-            )
-        else:
-            self.tfm = transforms.Compose(base)
-        self.tuples = tuples
-
-    def __len__(self):
-        return len(self.tuples)
-
-    def __getitem__(self, i):
-        rel, p, y = self.tuples[i]
-        img = Image.open(ROOT / rel).convert("RGB")
-        return self.tfm(img), torch.tensor([p, y], dtype=torch.float32)
+def set_seed(s):
+    random.seed(s)
+    np.random.seed(s)
+    torch.manual_seed(s)
+    torch.cuda.manual_seed_all(s)
 
 
-# ── Model ───────────────────────────────────────────────
-class FGINet(nn.Module):
-    """Swin‑Tiny backbone with built‑in global pooling → (B,768) feature."""
+def make_loaders():
+    full_ds = RTGENDatasetEyes(CSV_PATH)
+    N = len(full_ds)
+    n_train = int(N * SPLIT[0])
+    n_val = int(N * SPLIT[1])
+    n_test = N - n_train - n_val
 
-    def __init__(self):
-        super().__init__()
-        self.backbone = SwinTransformer(
-            img_size=120,
-            patch_size=4,
-            window_size=7,
-            embed_dim=96,
-            depths=[2, 2, 6, 2],
-            num_heads=[3, 6, 12, 24],
-            num_classes=0,
-            global_pool="avg",
-        )
-        self.head = nn.Sequential(nn.Linear(768, 128), nn.ReLU(True), nn.Linear(128, 2))
+    idx_all = list(range(N))
+    rng = np.random.default_rng(SEED)
+    rng.shuffle(idx_all)
 
-    def forward(self, x):
-        return self.head(self.backbone(x))
+    train_idx = idx_all[:n_train]
+    val_idx = idx_all[n_train : n_train + n_val]
+    test_idx = idx_all[n_train + n_val :]
 
+    # split 정보 저장 → 나중 시각화 때 그대로 사용
+    with open(SPLIT_JSON, "w") as f:
+        json.dump({"train": train_idx, "val": val_idx, "test": test_idx}, f)
 
-def ang_err(pred: torch.Tensor, gt: torch.Tensor):
-    """Angular error (deg) between predicted (pitch,yaw) and ground truth."""
-    v1 = torch.stack(
-        [
-            torch.cos(gt[:, 0]) * torch.sin(gt[:, 1]),
-            torch.sin(gt[:, 0]),
-            torch.cos(gt[:, 0]) * torch.cos(gt[:, 1]),
-        ],
-        1,
-    )
-    v2 = torch.stack(
-        [
-            torch.cos(pred[:, 0]) * torch.sin(pred[:, 1]),
-            torch.sin(pred[:, 0]),
-            torch.cos(pred[:, 0]) * torch.cos(pred[:, 1]),
-        ],
-        1,
-    )
-    return torch.rad2deg(torch.acos((v1 * v2).sum(1).clamp(-1, 1)))
+    subset = torch.utils.data.Subset
+    train_ld = DataLoader(subset(full_ds, train_idx), BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+    val_ld = DataLoader(subset(full_ds, val_idx), BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+    test_ld = DataLoader(subset(full_ds, test_idx), BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+    return train_ld, val_ld, test_ld
 
 
-# ── Train / Val pass ───────────────────────────────────
-
-
-def run(loader, model, opt=None, scaler=None, dev="cuda"):
-    """One epoch pass. Shows tqdm progress bar with live loss."""
-    model.train() if opt else model.eval()
-    phase = "train" if opt else "val "
-    iterator = tqdm(loader, leave=False, ncols=80, desc=phase)
-
-    tot_l = tot_a = n = 0
-    for img, tgt in iterator:
-        img, tgt = img.to(dev), tgt.to(dev)
-        if opt:
-            opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast("cuda", enabled=scaler is not None):
-            out = model(img)
-            loss = F.huber_loss(out, tgt) + 0.1 * F.mse_loss(out, tgt)
-        if opt:
-            if scaler:
-                scaler.scale(loss).backward()
-                scaler.step(opt)
-                scaler.update()
-            else:
-                loss.backward()
-                opt.step()
-        tot_l += loss.item() * img.size(0)
-        tot_a += ang_err(out.detach(), tgt).sum().item()
-        n += img.size(0)
-        iterator.set_postfix(loss=f"{loss.item():.3f}")
-
-    iterator.close()
-    return tot_l / n, tot_a / n
-
-
-# ── Main ────────────────────────────────────────────────
-
-
+# ── main ───────────────────────────────────────────────
 def main():
-    print(f"[CFG] root={ROOT}  epochs={EPOCHS}  batch={BATCH}  split={SPLIT}")
-    if not ROOT.exists():
-        raise SystemExit("[error] mpiigaze folder not found; set ROOT env or place it next to script.")
+    set_seed(SEED)
+    train_ld, val_ld, test_ld = make_loaders()
 
-    train_data, val_data = build_index()
-    print(f"[DATA] total {len(train_data)+len(val_data)} • train {len(train_data)} • val {len(val_data)}")
+    model = FGINetEyes().to(device)
+    for p in model.backbone.parameters():
+        p.requires_grad = False  # 눈 브랜치만 학습
+    opt = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LR_NEW, weight_decay=1e-4)
 
-    tr_ld = DataLoader(GazeDS(train_data, True), BATCH, True, num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=(NUM_WORKERS > 0))
-    va_ld = DataLoader(GazeDS(val_data, False), BATCH, False, num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=(NUM_WORKERS > 0))
+    def run(loader, train=True):
+        model.train(train)
+        tot, acc = 0, 0.0
+        for face, eyes, y in tqdm(loader, leave=False):
+            face, eyes, y = face.to(device), eyes.to(device), y.to(device)
+            with torch.set_grad_enabled(train):
+                pred = model(face, eyes)
+                loss = loss_fn(pred, y)
+                if train:
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+            acc += loss.item() * face.size(0)
+            tot += face.size(0)
+        return acc / tot
 
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
-    model = FGINet().to(dev)
-    opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
-    scaler = torch.amp.GradScaler("cuda", enabled=USE_AMP)
+    best = 1e9
+    for ep in range(EPOCHS):
+        tqdm.write(f"\n=== Epoch {ep+1}/{EPOCHS} ===")
+        if ep == 6:  # 백본 언프리즈
+            for p in model.backbone.parameters():
+                p.requires_grad = True
+            opt.add_param_group({"params": model.backbone.parameters(), "lr": LR_BACKBONE})
+            tqdm.write("→ Backbone unfrozen")
 
-    best = float("inf")
-    for ep in range(1, EPOCHS + 1):
-        t0 = time.time()
-        tr_l, tr_a = run(tr_ld, model, opt, scaler, dev)
-        va_l, va_a = run(va_ld, model, None, None, dev)
-        print(f"Ep{ep:03d}/{EPOCHS} {time.time()-t0:.1f}s  train {tr_a:.2f}°  val {va_a:.2f}°")
+        tr = run(train_ld, True)
+        vl = run(val_ld, False)
+        tqdm.write(f"train {tr:.4f} | val {vl:.4f}")
 
-        if va_a < best:
-            best = va_a
-            torch.save({"state": model.state_dict(), "best_deg": best, "ep": ep}, "fgi_best.pt")
-            print(f"   ↳ new best saved ({best:.2f}°)")
+        if vl < best:
+            best = vl
+            torch.save(model.state_dict(), CKPT_BEST)
+            tqdm.write("  ✓ best model saved")
+
+    tqdm.write("Training finished. Best val loss: %.4f" % best)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ if __name__ == "__main__":
     # ───────────────────────────────────────────────────
 
     # 1) CSV에 쓸 행 목록 준비 (헤더 포함)
-    rows = [["img_path", "eye_pitch", "eye_yaw"]]
+    rows = [["img_path", "head_pitch", "head_yaw", "eye_pitch", "eye_yaw"]]
     total_count = 0
 
     # 2) RTG_ROOT 안의 모든 피사체 폴더를 순회
@@ -52,7 +52,7 @@ if __name__ == "__main__":
         print(f"Parsed {len(gaze_records)} entries from {label_file}")
 
         # 6) 파싱된 각 라벨에 대해 이미지 파일이 있는지 확인하고 행 추가
-        for idx, (eye_pitch, eye_yaw) in gaze_records:
+        for idx, head_p, head_y, eye_p, eye_y in gaze_records:
             # 가능한 파일명: face_{idx:06d}_rgb.png 또는 .jpg
             fname_png = f"face_{idx:06d}_rgb.png"
             fname_jpg = f"face_{idx:06d}_rgb.jpg"
@@ -71,7 +71,7 @@ if __name__ == "__main__":
 
             # Windows 경로 구분자 '\' → '/'로 바꿔 주는 것이 안전
             normalized_path = img_path.replace("\\", "/")
-            rows.append([normalized_path, eye_pitch, eye_yaw])
+            rows.append([normalized_path, head_p, head_y, eye_p, eye_y])
             total_count += 1
 
     # 7) CSV로 저장

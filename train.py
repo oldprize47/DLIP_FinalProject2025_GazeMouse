@@ -1,175 +1,122 @@
-# 파일명: train.py
-
-import os
-import torch
-import torch.nn as nn
+# 파일: train_eyes.py
+import os, time, random, json, numpy as np, torch, torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
-from rtgene_dataset import RTGENDataset
-from fginet import FGINet
-
 from tqdm import tqdm
-from torch.optim.lr_scheduler import LambdaLR, CyclicLR
-import random, numpy as np
-import argparse, sys
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars.")
-args = parser.parse_args()
+from eye_dataset_file import RTGENDatasetEyes  # 얼굴+눈 데이터
+from fginet_eyes import FGINetEyes  # 새 모델
 
-# 터미널 여부(TTY) + --no-progress 둘 중 하나라도 False이면 진행바 OFF
-use_progress_bar = sys.stderr.isatty() and not args.no_progress
+# ── 설정 ────────────────────────────────────────────────
+CSV_PATH = "RT_GENE/rtgene_pairs_face_eye.csv"
+BATCH_SIZE = 16
+EPOCHS = 50
+SPLIT = (0.8, 0.1, 0.1)  # train:val:test
+SEED = 42
+CKPT_BEST = "best_fgineteyes.pth"
+SPLIT_JSON = "split_indices.json"
 
-seed = 42
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
-torch.cuda.manual_seed_all(seed)
+LR_NEW = 1e-4  # 눈 브랜치
+LR_BACKBONE = 3e-5  # 백본(6 epoch 이후)
 
-
-def train_one_epoch(model, loader, criterion, optimizer, device, use_clr=False, clr_scheduler=None):
-    model.train()
-    running_loss = 0.0
-
-    # ─── Warm-up이나 CLR에 상관없이, 오직 배치 진행바만 돌립니다. ───
-    loop = tqdm(loader, desc="  [Train]", leave=False, disable=not use_progress_bar)  # ← 여기만 바뀜
-    for images, labels in loop:
-        images = images.to(device)
-        labels = labels.to(device)
-
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if use_clr:
-            # CLR 구간일 때만 배치마다 LR 스케줄러 호출
-            clr_scheduler.step()
-
-        running_loss += loss.item() * images.size(0)
-        loop.set_postfix(batch_loss=loss.item())
-
-    return running_loss / len(loader.dataset)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ------------------------------------------------------
 
 
-def validate(model, loader, criterion, device):
-    model.eval()
-    running_loss = 0.0
+def angular_loss(pred, gt, eps=1e-6):
+    gx, gy = torch.sin(pred[:, 0]), torch.sin(pred[:, 1])
+    gz = torch.cos(pred[:, 0]) * torch.cos(pred[:, 1])
+    vx, vy = torch.sin(gt[:, 0]), torch.sin(gt[:, 1])
+    vz = torch.cos(gt[:, 0]) * torch.cos(gt[:, 1])
+    return torch.acos((gx * vx + gy * vy + gz * vz).clamp(-1 + eps, 1 - eps)).mean()
 
-    loop = tqdm(loader, desc="  [Val]  ", leave=False)
-    with torch.no_grad():
-        for images, labels in loop:
-            images = images.to(device)
-            labels = labels.to(device)
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            running_loss += loss.item() * images.size(0)
-            loop.set_postfix(val_loss=loss.item())
 
-    return running_loss / len(loader.dataset)
+def loss_fn(pred, gt):
+    head = nn.functional.l1_loss(pred[:, :2], gt[:, :2])
+    gaze = angular_loss(pred[:, 2:], gt[:, 2:])
+    return head + 2.0 * gaze
+
+
+def set_seed(s):
+    random.seed(s)
+    np.random.seed(s)
+    torch.manual_seed(s)
+    torch.cuda.manual_seed_all(s)
+
+
+def make_loaders():
+    full_ds = RTGENDatasetEyes(CSV_PATH)
+    N = len(full_ds)
+    n_train = int(N * SPLIT[0])
+    n_val = int(N * SPLIT[1])
+    n_test = N - n_train - n_val
+
+    idx_all = list(range(N))
+    rng = np.random.default_rng(SEED)
+    rng.shuffle(idx_all)
+
+    train_idx = idx_all[:n_train]
+    val_idx = idx_all[n_train : n_train + n_val]
+    test_idx = idx_all[n_train + n_val :]
+
+    # split 정보 저장 → 나중 시각화 때 그대로 사용
+    with open(SPLIT_JSON, "w") as f:
+        json.dump({"train": train_idx, "val": val_idx, "test": test_idx}, f)
+
+    subset = torch.utils.data.Subset
+    train_ld = DataLoader(subset(full_ds, train_idx), BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+    val_ld = DataLoader(subset(full_ds, val_idx), BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+    test_ld = DataLoader(subset(full_ds, test_idx), BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+    return train_ld, val_ld, test_ld
+
+
+# ── main ───────────────────────────────────────────────
+def main():
+    set_seed(SEED)
+    train_ld, val_ld, test_ld = make_loaders()
+
+    model = FGINetEyes().to(device)
+    for p in model.backbone.parameters():
+        p.requires_grad = False  # 눈 브랜치만 학습
+    opt = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LR_NEW, weight_decay=1e-4)
+
+    def run(loader, train=True):
+        model.train(train)
+        tot, acc = 0, 0.0
+        for face, eyes, y in tqdm(loader, leave=False):
+            face, eyes, y = face.to(device), eyes.to(device), y.to(device)
+            with torch.set_grad_enabled(train):
+                pred = model(face, eyes)
+                loss = loss_fn(pred, y)
+                if train:
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+            acc += loss.item() * face.size(0)
+            tot += face.size(0)
+        return acc / tot
+
+    best = 1e9
+    for ep in range(EPOCHS):
+        tqdm.write(f"\n=== Epoch {ep+1}/{EPOCHS} ===")
+        if ep == 6:  # 백본 언프리즈
+            for p in model.backbone.parameters():
+                p.requires_grad = True
+            opt.add_param_group({"params": model.backbone.parameters(), "lr": LR_BACKBONE})
+            tqdm.write("→ Backbone unfrozen")
+
+        tr = run(train_ld, True)
+        vl = run(val_ld, False)
+        tqdm.write(f"train {tr:.4f} | val {vl:.4f}")
+
+        if vl < best:
+            best = vl
+            torch.save(model.state_dict(), CKPT_BEST)
+            tqdm.write("  ✓ best model saved")
+
+    tqdm.write("Training finished. Best val loss: %.4f" % best)
 
 
 if __name__ == "__main__":
-    # ────────────────── 하이퍼파라미터 ──────────────────
-    num_epochs = 50  # 워밍업 + CLR 일부만 확인
-    batch_size = 16  # GPU 메모리에 맞춰 적절히 변경
-    base_lr = 5e-4  # 논문: 워밍업 후 최대 lr = 0.0005
-    val_split = 0.1  # 10%를 검증용으로
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # ────────────────── 데이터 전처리 ──────────────────
-    transform = transforms.Compose(
-        [
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
-
-    pairs_csv = "RT_GENE/rtgene_original_pairs.csv"
-    full_dataset = RTGENDataset(pairs_csv=pairs_csv, transform=transform)
-
-    val_size = int(len(full_dataset) * val_split)
-    train_size = len(full_dataset) - val_size
-
-    # 고정 시드 generator
-    split_seed = 42
-    generator = torch.Generator().manual_seed(split_seed)
-
-    # ★ generator 인자를 꼭 넘겨야 매번 같은 split이 됩니다
-    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=generator)  # ← 이 부분 추가!
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)  # 학습용은 epoch마다 셔플 OK
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)  # 검증셋은 셔플 X
-
-    # ────────────────── 모델·손실·옵티마이저 정의 ──────────────────
-    model = FGINet().to(device)
-    criterion = nn.L1Loss()
-
-    # ─── optimizer 초기 lr = base_lr(0.0005) ───
-    optimizer = optim.Adam(model.parameters(), lr=base_lr, betas=(0.88, 0.999), weight_decay=0.0)
-
-    # ─── 1) Warm-up 스케줄러 (Epoch 1~5) ───
-    def warmup_lambda(epoch):
-        return float(epoch + 1) / 5.0 if epoch < 5 else 1.0
-
-    warmup_scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
-
-    # ─── 2) CLR 스케줄러 (Epoch ≥6) ───
-    step_size_up = len(train_loader) * 5  # 배치 수 × 5 에폭
-    clr_scheduler = CyclicLR(optimizer, base_lr=1e-4, max_lr=base_lr, step_size_up=step_size_up, step_size_down=step_size_up, mode="triangular", cycle_momentum=False)  # CLR 최저 lr = 0.0001  # CLR 최고 lr = 0.0005
-
-    # ────────────────── 체크포인트 로드 ──────────────────
-    checkpoint_path = "best_fginet.pth"
-    start_epoch = 0
-    best_val_loss = float("inf")
-
-    if os.path.exists(checkpoint_path):
-        ckpt = torch.load(checkpoint_path, map_location=device)
-        # 모델 가중치 복원
-        model.load_state_dict(ckpt["model_state_dict"])
-        # 옵티마이저 상태 복원
-        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        # 이전 최저 val_loss, 다음 에폭 번호 복원
-        best_val_loss = ckpt.get("best_val_loss", best_val_loss)
-        start_epoch = ckpt.get("epoch", 0)
-        tqdm.write(f"Loaded checkpoint (epoch {start_epoch}, best_val_loss {best_val_loss:.6f})")
-    else:
-        tqdm.write("No checkpoint found, starting from scratch.")
-
-    # ────────────────── 학습 루프 ──────────────────
-    for epoch in range(start_epoch, num_epochs):
-        tqdm.write(f"\n=== Epoch {epoch+1}/{num_epochs} ===")
-
-        if epoch < 5:
-            # ─── ① Warm-up 구간 (Epoch 1~5) ───
-            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, use_clr=False, clr_scheduler=None)  # CLR 사용 안 함  # CLR 스케줄러 전달 X
-            warmup_scheduler.step()  # 에폭마다 lr 업데이트
-
-            # (원한다면 Epoch 시작 전 lr을 보고싶다면 다음 코드 추가)
-            # current_lr = optimizer.param_groups[0]["lr"]
-            # tqdm.write(f"(Warm-up)   After Epoch {epoch+1}, lr = {current_lr:.6f}")
-
-        else:
-            # ─── ② CLR 구간 (Epoch 6~7) ───
-            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, use_clr=True, clr_scheduler=clr_scheduler)  # CLR 사용
-            # Epoch 종료 시 lr 출력 (선택 사항)
-            # current_lr = optimizer.param_groups[0]["lr"]
-            # tqdm.write(f"(CLR)       After Epoch {epoch+1}, lr = {current_lr:.6f}")
-
-        # ─── 검증 ───
-        val_loss = validate(model, val_loader, criterion, device)
-        tqdm.write(f"Epoch [{epoch+1}/{num_epochs}]  Train Loss: {train_loss:.4f}  Val Loss: {val_loss:.4f}")
-
-        # ─── 체크포인트 저장 조건 ───
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            # 모델·옵티마이저 상태 + epoch + best_val_loss 기록
-            torch.save({"epoch": epoch + 1, "model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "best_val_loss": best_val_loss}, checkpoint_path)
-            tqdm.write(f"  → Saved checkpoint (epoch {epoch+1}, val_loss: {val_loss:.4f})")
-
-    tqdm.write("Training complete.")
+    main()
