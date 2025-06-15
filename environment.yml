@@ -140,4 +140,3 @@ dependencies:
       - torchvision==0.20.1
       - tqdm==4.67.1
       - urllib3==2.4.0
-prefix: C:\Users\Sangheon\anaconda3\envs\fgi
