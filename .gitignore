@@ -3,3 +3,13 @@
 *.pth
 **.png
 **/RT_GENE
+**/recalib_patches
+**/recalib_patches_SH
+**/recalib_patches_SW
+*.csv
+**/others
+**/models
+*.json
+**/__pycache__
+*.pyc
+**/.vscode

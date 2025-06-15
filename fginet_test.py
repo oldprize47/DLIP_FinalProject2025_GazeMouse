@@ -3,7 +3,7 @@
 import torch
 from torch.utils.data import DataLoader
 from fginet import FGINet
-from dataset_module import GazeScreenDataset  # 앞서 구현한 Dataset
+from others.dataset_module import GazeScreenDataset  # 앞서 구현한 Dataset
 
 
 def main():
