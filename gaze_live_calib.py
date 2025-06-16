@@ -5,6 +5,7 @@ from torchvision import transforms
 from eye_patch_dataset import EyePatchDataset, get_infer_transform
 from fginet import FGINet
 import time
+import os
 
 # ========== Mediapipe 준비 ==========
 mp_face = mp.solutions.face_mesh
@@ -13,7 +14,8 @@ LEFT = [33, 133, 160, 159, 158, 157, 173, 246]
 RIGHT = [362, 263, 387, 386, 385, 384, 398, 466]
 
 # ========== 환경 ==========
-CKPT = "finetuned_SH.pth"
+calib_file = "calib_SH.npy"
+CKPT = "Last_fine_SH.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SMOOTH_ALPHA = 0.9
 model = FGINet().to(DEVICE).eval()
@@ -57,13 +59,22 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.6):
 
 
 # ========== 캘리브레이션 지점 ==========
-x_ratios = [0.1, 0.5, 0.9]
-y_ratios = [0.1, 0.5, 0.9]
-calib_targets = [(int(W * x), int(H * y)) for y in y_ratios for x in x_ratios]
+A = None
+calibrated = False
+
+# 1) 파일 있으면 바로 로드
+if os.path.exists(calib_file):
+    A = np.load(calib_file)
+    calibrated = True
+    print("캘리브레이션 파일을 불러왔습니다!")
+
+x_ratios = np.linspace(0, 1, 7)
+y_ratios = np.linspace(0, 1, 5)
+calib_targets = [(int(round(x * (W - 1))), int(round(y * (H - 1)))) for y in y_ratios for x in x_ratios]
 
 
 # ========== 캘리브레이션 함수 ==========
-def calibrate(cap, min_time=1.5, required_stable=18, std_threshold=30):
+def calibrate(cap, min_time=1.5, required_stable=20, std_threshold=35):
     preds, targets = [], []
     cv2.namedWindow("calib_full", cv2.WND_PROP_FULLSCREEN)
     cv2.setWindowProperty("calib_full", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
@@ -73,6 +84,9 @@ def calibrate(cap, min_time=1.5, required_stable=18, std_threshold=30):
     for idx, (tx, ty) in enumerate(calib_targets):
         bg = np.zeros((H, W, 3), dtype=np.uint8)
         cv2.circle(bg, (tx, ty), 30, (0, 0, 255), -1)
+        line_len = 35  # 십자선 길이(원 크기보다 약간 길게)
+        cv2.line(bg, (tx - line_len, ty), (tx + line_len, ty), (0, 0, 0), 5)  # 가로선(검정, 두께5)
+        cv2.line(bg, (tx, ty - line_len), (tx, ty + line_len), (0, 0, 0), 5)  # 세로선(검정, 두께5)
         buf = []
         t_start = time.time()
         last_print = time.time()
@@ -97,14 +111,14 @@ def calibrate(cap, min_time=1.5, required_stable=18, std_threshold=30):
 
             now = time.time()
             # **1초마다 프린트**
-            if now - last_print > 1.0 and len(buf) > 3:
-                arr = np.array(buf)
-                mean = arr.mean(axis=0)
-                std = arr.std(axis=0)
-                print(f"  예측값 분포 (최근 {len(buf)}개):")
-                print(f"    X = {arr[:,0].min():.1f} ~ {arr[:,0].max():.1f},  평균 {mean[0]:.1f}, std {std[0]:.2f}")
-                print(f"    Y = {arr[:,1].min():.1f} ~ {arr[:,1].max():.1f},  평균 {mean[1]:.1f}, std {std[1]:.2f}")
-                last_print = now
+            # if now - last_print > 1.0 and len(buf) > 3:
+            #     arr = np.array(buf)
+            #     mean = arr.mean(axis=0)
+            #     std = arr.std(axis=0)
+            #     print(f"  예측값 분포 (최근 {len(buf)}개):")
+            #     print(f"    X = {arr[:,0].min():.1f} ~ {arr[:,0].max():.1f},  평균 {mean[0]:.1f}, std {std[0]:.2f}")
+            #     print(f"    Y = {arr[:,1].min():.1f} ~ {arr[:,1].max():.1f},  평균 {mean[1]:.1f}, std {std[1]:.2f}")
+            #     last_print = now
 
             if (now - t_start > min_time) and len(buf) == required_stable:
                 arr = np.array(buf)
@@ -145,11 +159,11 @@ def apply_calib(pred, A):
 
 # ========== 실시간 루프 ==========
 def main():
+    global A, calibrated  # 이 줄 추가
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     prev = np.array([0.0, 0.0], dtype=np.float32)
-    calibrated = False
-    A = None
     print("[i] c 키를 누르면 캘리브레이션 시작")
+    print("[i] space: 이전 캘리브레이션 불러와서 추적 시작")
     print("[i] esc 키로 종료")
     while True:
         ret, frame = cap.read()
@@ -157,12 +171,24 @@ def main():
             continue
         frame = cv2.flip(frame, 1)
         key = cv2.waitKey(1)
-        if key == ord("c") and not calibrated:
-            # --- 캘리브레이션 ---
+        # 1. c키: 새 캘리브레이션
+        if key == ord("c"):
             A = calibrate(cap)
+            np.save(calib_file, A)
             calibrated = True
             print("캘리브레이션 완료! 실시간 추적 시작")
             time.sleep(0.5)
+            continue
+
+        # 2. 스페이스바: 파일 있으면 바로 불러와서 실시간 추적
+        if key == ord(" "):
+            if os.path.exists(calib_file):
+                A = np.load(calib_file)
+                calibrated = True
+                print("이전 캘리브레이션 불러옴! 실시간 추적 시작")
+                time.sleep(0.3)
+            else:
+                print("저장된 캘리브레이션 파일이 없습니다. c키로 먼저 캘리브레이션하세요!")
             continue
         if key == 27:  # ESC
             break

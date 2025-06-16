@@ -58,7 +58,7 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.7):
 # ---------- 환경 ----------
 CKPT = "finetuned_SH.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SMOOTH_ALPHA = 0.8  # 1차 저역통과 필터 계수
+SMOOTH_ALPHA = 0.85  # 1차 저역통과 필터 계수
 # --------------------------
 
 # 1) 모델 로드
@@ -70,7 +70,6 @@ else:
     model.load_state_dict(ckpt)
 
 # 2) 전처리(데이터셋 클래스의 tf 그대로 사용)
-tf = EyePatchDataset(csv_path="recalib_data_SH.csv").tf
 tf_infer = get_infer_transform()
 # 3) 모니터 해상도
 W, H = pyautogui.size()
@@ -117,7 +116,7 @@ while True:
     draw_y = int(frame.shape[0] // 2 + smoothed[1] * (frame.shape[0] / H))
     cv2.circle(frame, (draw_x, draw_y), 5, (0, 255, 0), -1)
     cv2.imshow("gaze", frame)
-    cv2.imshow("patch", patch)
+    # cv2.imshow("patch", patch)
 
     # ----- FPS 계산 ----------
     if time.time() - t0 >= 1.0:

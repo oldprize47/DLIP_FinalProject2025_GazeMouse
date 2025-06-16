@@ -18,7 +18,7 @@ class EyePatchDataset(torch.utils.data.Dataset):
         self.tf = transforms.Compose(
             [
                 transforms.Lambda(self._smart_crop),  # 검은 여백 제거
-                transforms.ColorJitter(brightness=0.2, contrast=0.15, saturation=0.07, hue=0.02),
+                transforms.ColorJitter(brightness=0.1, contrast=0.08, saturation=0.05, hue=0.01),
                 transforms.Lambda(self._pad_to_square),  # 패딩 추가!
                 transforms.ToTensor(),
                 transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
