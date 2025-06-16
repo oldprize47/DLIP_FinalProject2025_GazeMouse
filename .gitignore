@@ -1,6 +1,6 @@
 **/mpiigaze
 *.pt
-# *.pth
+*.pth
 **.png
 **/RT_GENE
 **/recalib_patches
@@ -13,3 +13,4 @@
 **/__pycache__
 *.pyc
 **/.vscode
+*.npy
