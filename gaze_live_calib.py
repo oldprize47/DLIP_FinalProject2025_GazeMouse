@@ -15,9 +15,9 @@ RIGHT = [362, 263, 387, 386, 385, 384, 398, 466]
 
 # ========== 환경 ==========
 calib_file = "calib_SH.npy"
-CKPT = "Last_fine_SH.pth"
+CKPT = "2finetuned_SH.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SMOOTH_ALPHA = 0.9
+SMOOTH_ALPHA = 0.92
 model = FGINet().to(DEVICE).eval()
 ckpt = torch.load(CKPT, map_location=DEVICE)
 if isinstance(ckpt, dict) and "model" in ckpt:
@@ -67,26 +67,31 @@ if os.path.exists(calib_file):
     A = np.load(calib_file)
     calibrated = True
     print("캘리브레이션 파일을 불러왔습니다!")
-
-x_ratios = np.linspace(0, 1, 7)
-y_ratios = np.linspace(0, 1, 5)
+margin = 0.01
+x_ratios = np.linspace(0 + margin, 1 - margin, 7)
+y_ratios = np.linspace(0 + margin, 1 - margin, 5)
 calib_targets = [(int(round(x * (W - 1))), int(round(y * (H - 1)))) for y in y_ratios for x in x_ratios]
 
 
 # ========== 캘리브레이션 함수 ==========
-def calibrate(cap, min_time=1.5, required_stable=20, std_threshold=35):
+def calibrate(cap, min_time=2, required_stable=20, std_threshold=30):
     preds, targets = [], []
     cv2.namedWindow("calib_full", cv2.WND_PROP_FULLSCREEN)
     cv2.setWindowProperty("calib_full", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     print("\n===== Calibration Mode =====")
     print("각 점에 '빨간 점'이 나오면 그 점을 바라봐 주세요!")
     print("잠시(1.5초~)동안 충분히 응시하면 다음 점으로 넘어갑니다.\n")
+    GRAY_COLOR = (100, 100, 100)
+    BLACK_COLOR = (0, 0, 0)
+    WHITE_COLOR = (255, 255, 255)
     for idx, (tx, ty) in enumerate(calib_targets):
-        bg = np.zeros((H, W, 3), dtype=np.uint8)
+        bg = np.full((H, W, 3), GRAY_COLOR, dtype=np.uint8)
         cv2.circle(bg, (tx, ty), 30, (0, 0, 255), -1)
-        line_len = 35  # 십자선 길이(원 크기보다 약간 길게)
-        cv2.line(bg, (tx - line_len, ty), (tx + line_len, ty), (0, 0, 0), 5)  # 가로선(검정, 두께5)
-        cv2.line(bg, (tx, ty - line_len), (tx, ty + line_len), (0, 0, 0), 5)  # 세로선(검정, 두께5)
+        line_len = 30  # 십자선 길이(원 크기보다 약간 길게)
+        cv2.line(bg, (tx - line_len, ty), (tx + line_len, ty), BLACK_COLOR, 5)  # 가로선(검정, 두께5)
+        cv2.line(bg, (tx, ty - line_len), (tx, ty + line_len), BLACK_COLOR, 5)  # 세로선(검정, 두께5)
+        cv2.circle(bg, (tx, ty), 4, WHITE_COLOR, -1)
+        line_len = 30  # 십자선 길이(원 크기보다 약간 길게)
         buf = []
         t_start = time.time()
         last_print = time.time()
@@ -131,7 +136,7 @@ def calibrate(cap, min_time=1.5, required_stable=20, std_threshold=35):
                     break
 
             cv2.imshow("calib_full", bg)
-            cv2.imshow("patch", patch)
+            # cv2.imshow("patch", patch)
             if cv2.waitKey(1) & 0xFF == 27:
                 print("캘리브레이션 취소!")
                 exit(0)
@@ -139,7 +144,7 @@ def calibrate(cap, min_time=1.5, required_stable=20, std_threshold=35):
         preds.append(mean_pred)
         targets.append([tx - cx, ty - cy])
     cv2.destroyWindow("calib_full")
-    cv2.destroyWindow("patch")
+    # cv2.destroyWindow("patch")
     # 최소제곱 보정
     preds = np.array(preds)
     targets = np.array(targets)
@@ -155,6 +160,32 @@ def apply_calib(pred, A):
     offset = np.dot(x, A)  # (2,) [tx-cx, ty-cy]
     screen_xy = np.array([cx, cy]) + offset
     return screen_xy
+
+
+def draw_face_body_mask(img, alpha=0.7, face_radius_ratio=0.34, body_width_ratio=0.4, body_height_ratio=0.3):
+    h, w = img.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+
+    # 1. 얼굴 원 (조금 작게, 중앙 약간 위로)
+    face_center = (w // 2, int(h * 0.5))  # 약간 위
+    face_radius = int(min(w, h) * face_radius_ratio)
+    cv2.circle(mask, face_center, face_radius, 255, -1)
+
+    # 2. 몸통 타원 (중앙 약간 아래, 얼굴 원과 연결)
+    body_center = (w // 2, int(h))
+    body_axes = (int(w * body_width_ratio), int(h * body_height_ratio))
+    cv2.ellipse(mask, body_center, body_axes, 0, 0, 360, 255, -1)
+
+    # 3. 합치기: 원본은 보이고 나머지 반투명
+    mask_inv = cv2.bitwise_not(mask)
+    colored = np.zeros_like(img)
+    colored[:] = (0, 0, 0)
+
+    overlay = cv2.addWeighted(img, 1 - alpha, colored, alpha, 0)
+    result = img.copy()
+    # 반투명 영역 적용
+    result[mask_inv > 0] = overlay[mask_inv > 0]
+    return result
 
 
 # ========== 실시간 루프 ==========
@@ -206,14 +237,16 @@ def main():
 
         # 보정 적용
         screen_xy = apply_calib(smoothed, A)
-        x_px, y_px = int(screen_xy[0]), int(screen_xy[1])
+        x_px = np.clip(int(screen_xy[0]), 5, W - 5)
+        y_px = np.clip(int(screen_xy[1]), 5, H - 5)
         pyautogui.moveTo(x_px, y_px, _pause=False)
 
         # 디버그 표시
-        draw_x = int(frame.shape[1] // 2 + smoothed[0] * (frame.shape[1] / W))
-        draw_y = int(frame.shape[0] // 2 + smoothed[1] * (frame.shape[0] / H))
-        cv2.circle(frame, (draw_x, draw_y), 6, (0, 255, 0), -1)
-        cv2.imshow("gaze", frame)
+        # draw_x = int(frame.shape[1] // 2 + smoothed[0] * (frame.shape[1] / W))
+        # draw_y = int(frame.shape[0] // 2 + smoothed[1] * (frame.shape[0] / H))
+        # cv2.circle(frame, (draw_x, draw_y), 6, (0, 255, 0), -1)
+        masked = draw_face_body_mask(frame, alpha=0.68)  # alpha 높을수록 진해짐
+        cv2.imshow("gaze", masked)
     cap.release()
     cv2.destroyAllWindows()
 

@@ -56,7 +56,7 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.7):
 
 
 # ---------- 환경 ----------
-CKPT = "finetuned_SH.pth"
+CKPT = "2finetuned_SH.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SMOOTH_ALPHA = 0.85  # 1차 저역통과 필터 계수
 # --------------------------

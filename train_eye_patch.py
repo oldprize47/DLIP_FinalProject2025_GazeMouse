@@ -15,14 +15,14 @@ from fginet import FGINet
 CSV_PATH = "recalib_data_SH.csv"
 BATCH_SIZE = 16
 EPOCHS = 150
-SPLIT = (0.8, 0.1, 0.1)
-SEED = 47
-CKPT_BEST = "2finetuned_SH.pth"
+SPLIT = (0.9, 0.05, 0.05)
+SEED = 42
+CKPT_BEST = "3finetuned_SH.pth"
 
 LR_HEAD = 1e-3
-LR_BACKBONE = 1e-3
+LR_BACKBONE = 3e-4
 WARM_EPOCHS = 2
-PATIENCE = 20  # early stop
+PATIENCE = 30  # early stop
 
 W, H = pyautogui.size()
 # LAMBDA_Y = W / H

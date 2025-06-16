@@ -1,6 +1,6 @@
 **/mpiigaze
 *.pt
-*.pth
+# *.pth
 **.png
 **/RT_GENE
 **/recalib_patches
