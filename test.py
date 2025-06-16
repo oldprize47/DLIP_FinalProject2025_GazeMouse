@@ -3,16 +3,16 @@ import os, time
 import numpy as np
 from math import hypot
 from PIL import Image
+import random
 
 # ──────────────── 컴퓨터 비전 / 머신러닝 ────────────────
-import cv2                                    # OpenCV ― 영상 캡처·처리
-import mediapipe as mp                        # 얼굴/눈 랜드마크
+import cv2  # OpenCV ― 영상 캡처·처리
+import mediapipe as mp  # 얼굴/눈 랜드마크
 import torch
 from torchvision import transforms
 
 # ──────────────── GUI·인풋 제어 ────────────────
-import pyautogui                              # 마우스 이동·클릭
-pyautogui.FAILSAFE = True                     # ↖ 구석으로 이동 시 즉시 종료
+import pyautogui  # 마우스 이동·클릭
 
 # ──────────────── 모델·데이터셋 로더 ────────────────
 from fginet import FGINet
@@ -26,10 +26,10 @@ LEFT = [33, 133, 160, 159, 158, 157, 173, 246]
 RIGHT = [362, 263, 387, 386, 385, 384, 398, 466]
 
 # ========== 환경 ==========
-calib_file = "calib_SH.npy"
-CKPT = "2finetuned_SH.pth"
+calib_file = "calib_SH1.npy"
+CKPT = "3finetuned_SH.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SMOOTH_ALPHA = 0.92
+SMOOTH_ALPHA = 0.95
 model = FGINet().to(DEVICE).eval()
 ckpt = torch.load(CKPT, map_location=DEVICE)
 if isinstance(ckpt, dict) and "model" in ckpt:
@@ -43,19 +43,22 @@ cx, cy = W // 2, H // 2
 
 # ================= Eye blink 환경 부분 ================================
 
+
 def calculate_ear(eye_points, landmarks):
     p1, p2, p3, p4, p5, p6 = [landmarks[idx] for idx in eye_points]
-    ear = (hypot(p2[0]-p6[0], p2[1]-p6[1]) + hypot(p3[0]-p5[0], p3[1]-p5[1])) / (2.0 * hypot(p1[0]-p4[0], p1[1]-p4[1]))
+    ear = (hypot(p2[0] - p6[0], p2[1] - p6[1]) + hypot(p3[0] - p5[0], p3[1] - p5[1])) / (2.0 * hypot(p1[0] - p4[0], p1[1] - p4[1]))
     return ear
+
 
 LEFT_EYE = [33, 160, 158, 133, 153, 144]
 RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 EAR_THRESHOLD = 0.20
-FIX_RADIUS = 60   # 마우스 고정 원 반경(px)
-FIX_TIME = 3.0    # 고정 트리거 시간(초)
+FIX_RADIUS = 60  # 마우스 고정 원 반경(px)
+FIX_TIME = 1.5  # 고정 트리거 시간(초)
 UNLOCK_EYE_TIME = 1.0  # 눈 감고 있을 때 해제 시간(초) (1초로 변경)
-BLINK_COOLTIME = 0.8   # 클릭 쿨타임(초)
-CONSEC_FRAMES = 2      # 블링크 프레임
+BLINK_COOLTIME = 0.8  # 클릭 쿨타임(초)
+CONSEC_FRAMES = 2  # 블링크 프레임
+
 
 class FaceMeshGenerator:
     def __init__(self, mode=False, num_faces=2, min_detection_con=0.5, min_track_con=0.5):
@@ -65,44 +68,36 @@ class FaceMeshGenerator:
         self.min_detection_con = min_detection_con
         self.min_track_con = min_track_con
         self.mp_faceDetector = mp.solutions.face_mesh
-        self.face_mesh = self.mp_faceDetector.FaceMesh(
-            static_image_mode=self.mode,
-            max_num_faces=self.num_faces,
-            min_detection_confidence=self.min_detection_con,
-            min_tracking_confidence=self.min_track_con
-        )
+        self.face_mesh = self.mp_faceDetector.FaceMesh(static_image_mode=self.mode, max_num_faces=self.num_faces, min_detection_confidence=self.min_detection_con, min_tracking_confidence=self.min_track_con)
         self.mp_Draw = mp.solutions.drawing_utils
         self.drawSpecs = self.mp_Draw.DrawingSpec(thickness=1, circle_radius=2)
 
     def create_face_mesh(self, frame, draw=True):
-        frame_rgb = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         self.results = self.face_mesh.process(frame_rgb)
         landmarks_dict = {}
         if self.results.multi_face_landmarks:
             for face_lms in self.results.multi_face_landmarks:
                 if draw:
-                    self.mp_Draw.draw_landmarks(
-                        frame,
-                        face_lms,
-                        self.mp_faceDetector.FACEMESH_CONTOURS,
-                        self.drawSpecs,
-                        self.drawSpecs
-                    )
+                    self.mp_Draw.draw_landmarks(frame, face_lms, self.mp_faceDetector.FACEMESH_CONTOURS, self.drawSpecs, self.drawSpecs)
                 ih, iw, _ = frame.shape
                 for ID, lm in enumerate(face_lms.landmark):
                     x, y = int(lm.x * iw), int(lm.y * ih)
                     landmarks_dict[ID] = (x, y)
         return frame, landmarks_dict
 
+
 def is_inside_circle(center, point, r):
-    return (center[0] - point[0])**2 + (center[1] - point[1])**2 <= r**2
+    return (center[0] - point[0]) ** 2 + (center[1] - point[1]) ** 2 <= r**2
+
 
 # =================================================
+
 
 def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.6):
     h, w = frame.shape[:2]
     res = face_mesh.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    if not res.multi_face_landmarks:               # 얼굴 미검출
+    if not res.multi_face_landmarks:  # 얼굴 미검출
         return None, {}
 
     lm = res.multi_face_landmarks[0].landmark
@@ -115,7 +110,7 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.6):
 
     cx_lm, cy_lm = (xmin + xmax) / 2, (ymin + ymax) / 2
     w_box = (xmax - xmin) * (margin + 1)
-    h_box = (ymax - ymin) * (margin + 4.5)         # 세로 여유를 더 줌
+    h_box = (ymax - ymin) * (margin + 4.5)  # 세로 여유를 더 줌
 
     xmin, xmax = cx_lm - w_box / 2, cx_lm + w_box / 2
     ymin, ymax = cy_lm - h_box / 2, cy_lm + h_box / 2
@@ -123,7 +118,7 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.6):
     y1, y2 = int(max(0, ymin * h)), int(min(h - 1, ymax * h))
 
     eye_patch = frame[y1:y2, x1:x2]
-    if eye_patch.size == 0:                         # 드물게 잘림이 틀어질 경우
+    if eye_patch.size == 0:  # 드물게 잘림이 틀어질 경우
         return None, {}
 
     # 패치 리사이즈 → 정사각형 캔버스
@@ -133,7 +128,7 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.6):
     canvas = np.zeros((img_size, img_size, 3), dtype=np.uint8)
     y_off = (img_size - resized.shape[0]) // 2
     x_off = (img_size - resized.shape[1]) // 2
-    canvas[y_off:y_off + resized.shape[0], x_off:x_off + resized.shape[1]] = resized
+    canvas[y_off : y_off + resized.shape[0], x_off : x_off + resized.shape[1]] = resized
 
     # 랜드마크 픽셀 좌표 dict
     lm_dict = {idx: (int(pt.x * w), int(pt.y * h)) for idx, pt in enumerate(lm)}
@@ -142,18 +137,64 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.6):
 
 
 # ========== 캘리브레이션 지점 ==========
-A = None
+coefs = None
 calibrated = False
 
 # 1) 파일 있으면 바로 로드
 if os.path.exists(calib_file):
-    A = np.load(calib_file)
+    coefs = np.load(calib_file, allow_pickle=True)
     calibrated = True
     print("캘리브레이션 파일을 불러왔습니다!")
-margin = 0.01
-x_ratios = np.linspace(0 + margin, 1 - margin, 7)
-y_ratios = np.linspace(0 + margin, 1 - margin, 5)
+
+n_x = 5
+n_y = 3
+margin_x = 0.03
+margin_y = 0.03
+x_ratios = np.linspace(0 + margin_x, 1 - margin_x, n_x)
+y_ratios = np.linspace(0 + margin_y, 1 - margin_y, n_y)
 calib_targets = [(int(round(x * (W - 1))), int(round(y * (H - 1)))) for y in y_ratios for x in x_ratios]
+
+# ① 구석 4개
+corners = [
+    (2, 2),  # 좌상
+    (W - 3, 2),  # 우상
+    (2, H - 3),  # 좌하
+    (W - 3, H - 3),  # 우하
+]
+
+# ② 중앙 1개
+center = [(W // 2, H // 2)]
+
+# ③ 네 변 중간 4개
+middles = [
+    (W // 2, 2),  # 상단 중앙
+    (W // 2, H - 3),  # 하단 중앙
+    (2, H // 2),  # 좌측 중앙
+    (W - 3, H // 2),  # 우측 중앙
+]
+
+# ④ 합치기
+bonus_points = corners + center + middles
+
+# # (2) **사이드 라인상 추가 포인트**
+# N_SIDE = 5
+# margin_side = 0.001
+# # x만 변하고 y는 경계
+# x_side_ratios = np.linspace(0 + margin_side, 1 - margin_side, N_SIDE)
+# y_side_ratios = np.linspace(0 + margin_side, 1 - margin_side, N_SIDE)
+
+# side_top = [(int(round(x * (W - 1))), 0) for x in x_side_ratios]
+# side_bottom = [(int(round(x * (W - 1))), H - 1) for x in x_side_ratios]
+# side_left = [(0, int(round(y * (H - 1)))) for y in y_side_ratios]
+# side_right = [(W - 1, int(round(y * (H - 1)))) for y in y_side_ratios]
+
+# side_points = side_top + side_bottom + side_left + side_right
+
+# (3) 합치고 중복 제거
+calib_targets = list({(int(x), int(y)) for (x, y) in calib_targets + bonus_points})
+
+# (4) 랜덤하게 순서 섞기
+random.shuffle(calib_targets)
 
 
 # ========== 캘리브레이션 함수 ==========
@@ -184,7 +225,7 @@ def calibrate(cap, min_time=2, required_stable=20, std_threshold=30):
             if not ret:
                 continue
             frame = cv2.flip(frame, 1)
-            patch = crop_eyes(frame)
+            patch, _ = crop_eyes(frame)
             if patch is None:
                 cv2.imshow("calib_full", bg)
                 cv2.waitKey(1)
@@ -231,17 +272,23 @@ def calibrate(cap, min_time=2, required_stable=20, std_threshold=30):
     # 최소제곱 보정
     preds = np.array(preds)
     targets = np.array(targets)
-    ones = np.ones((preds.shape[0], 1))
-    X = np.hstack([preds, ones])
-    A, _, _, _ = np.linalg.lstsq(X, targets, rcond=None)
-    return A
+
+    def linear_features(arr):
+        x, y = arr[:, 0], arr[:, 1]
+        return np.stack([np.ones_like(x), x, y], axis=1)  # (N, 3)
+
+    X_lin = linear_features(preds)
+    coef_x, _, _, _ = np.linalg.lstsq(X_lin, targets[:, 0], rcond=None)
+    coef_y, _, _, _ = np.linalg.lstsq(X_lin, targets[:, 1], rcond=None)
+    return (coef_x, coef_y)
 
 
-def apply_calib(pred, A):
-    # pred: (2,), A: (3,2)
-    x = np.append(pred, 1.0)  # [dx, dy, 1]
-    offset = np.dot(x, A)  # (2,) [tx-cx, ty-cy]
-    screen_xy = np.array([cx, cy]) + offset
+def apply_calib_linear(pred, coefs):
+    dx, dy = pred[0], pred[1]
+    feat = np.array([1.0, dx, dy])
+    tx = np.dot(feat, coefs[0])
+    ty = np.dot(feat, coefs[1])
+    screen_xy = np.array([cx, cy]) + np.array([tx, ty])
     return screen_xy
 
 
@@ -273,8 +320,9 @@ def draw_face_body_mask(img, alpha=0.7, face_radius_ratio=0.34, body_width_ratio
 
 # ========== 실시간 루프 ==========
 
+
 def main():
-    global A, calibrated
+    global coefs, calibrated
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     pyautogui.FAILSAFE = False
 
@@ -294,30 +342,37 @@ def main():
             continue
         frame = cv2.flip(frame, 1)
         key = cv2.waitKey(1) & 0xFF
+        disp = draw_face_body_mask(frame, alpha=0.68)
 
         # ───────── 단축키 ─────────
-        if key == ord('c'):
-            A = calibrate(cap)
-            np.save(calib_file, A)
+        if key == ord("c"):
+            coefs = calibrate(cap)
+            np.save(calib_file, coefs)
             calibrated = True
             print(">> 캘리브레이션 완료")
             time.sleep(0.4)
             continue
-        elif key == ord(' '):
+        elif key == ord(" "):
             if os.path.exists(calib_file):
-                A = np.load(calib_file)
+                coefs = np.load(calib_file, allow_pickle=True)
                 calibrated = True
                 print(">> 기존 캘리브레이션 로드")
             else:
                 print("저장된 캘리브레이션 없음")
+                calibrated = False  # ★ 파일 없으면 False로!
             time.sleep(0.3)
             continue
-        elif key == 27:      # ESC
+        elif key == 27:  # ESC
             break
+
+        # ========== 여기에 방어 코드 추가 ==========
+        if not calibrated or coefs is None:
+            cv2.imshow("gaze", disp)
+            continue
 
         # ───────── 눈 패치 + 랜드마크 ─────────
         patch, lm_dict = crop_eyes(frame)  # crop_eyes가 (patch, lm_dict) 반환
-        if patch is None or not calibrated:
+        if patch is None or patch.size == 0:
             cv2.imshow("gaze", frame)
             continue
 
@@ -329,7 +384,7 @@ def main():
         prev[:] = smoothed
 
         # gaze → 픽셀
-        gaze_xy = apply_calib(smoothed, A)
+        gaze_xy = apply_calib_linear(smoothed, coefs)
         gx = int(np.clip(gaze_xy[0], 5, W - 5))
         gy = int(np.clip(gaze_xy[1], 5, H - 5))
 
@@ -364,34 +419,29 @@ def main():
                 unlock_eye_timer = None
 
         # ───────── 블링크-클릭 : 고정 상태에서만 ─────────
-        if fixed:                                 # ← 추가 조건
+        if fixed:  # ← 추가 조건
             if l_ear < EAR_THRESHOLD and r_ear < EAR_THRESHOLD:
                 frame_counter += 1
             else:
-                if (frame_counter >= CONSEC_FRAMES and
-                    time.time() - last_blink_time > BLINK_COOLTIME):
+                if frame_counter >= CONSEC_FRAMES and time.time() - last_blink_time > BLINK_COOLTIME:
                     pyautogui.click()
                     blink_count += 1
                     last_blink_time = time.time()
                 frame_counter = 0
         else:
-            frame_counter = 0          # 고정이 아니면 카운터 초기화
+            frame_counter = 0  # 고정이 아니면 카운터 초기화
 
             # 텍스트 디버그
             tx, gap = frame.shape[1] - 240, 45
-            cv2.putText(frame, f'Blinks: {blink_count}', (tx, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, f'L EAR: {l_ear:.2f}', (tx - 30, 30 + gap * 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-            cv2.putText(frame, f'R EAR: {r_ear:.2f}', (tx - 30, 30 + gap * 3),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 128, 255), 2)
+            cv2.putText(frame, f"Blinks: {blink_count}", (tx, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, f"L EAR: {l_ear:.2f}", (tx - 30, 30 + gap * 2), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+            cv2.putText(frame, f"R EAR: {r_ear:.2f}", (tx - 30, 30 + gap * 3), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 128, 255), 2)
 
         # ───────── 마우스 이동 ─────────
         if fixed and fix_center:
             pyautogui.moveTo(*fix_center, _pause=False)
             cv2.circle(frame, fix_center, FIX_RADIUS, (0, 0, 255), 3)
-            cv2.putText(frame, "LOCKED!", (fix_center[0] - 50, fix_center[1] - FIX_RADIUS - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.putText(frame, "LOCKED!", (fix_center[0] - 50, fix_center[1] - FIX_RADIUS - 20), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         else:
             pyautogui.moveTo(gx, gy, _pause=False)
             if fix_center:
@@ -403,8 +453,6 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
-
-
 
 
 if __name__ == "__main__":

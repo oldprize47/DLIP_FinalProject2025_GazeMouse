@@ -4,8 +4,8 @@ from PIL import Image
 from torchvision import transforms
 from eye_patch_dataset import EyePatchDataset, get_infer_transform
 from fginet import FGINet
-import time
 import os
+import random
 
 # ========== Mediapipe 준비 ==========
 mp_face = mp.solutions.face_mesh
@@ -14,10 +14,10 @@ LEFT = [33, 133, 160, 159, 158, 157, 173, 246]
 RIGHT = [362, 263, 387, 386, 385, 384, 398, 466]
 
 # ========== 환경 ==========
-calib_file = "calib_SH.npy"
-CKPT = "2finetuned_SH.pth"
+calib_file = "calib_SH2.npy"
+CKPT = "3finetuned_SH.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SMOOTH_ALPHA = 0.92
+SMOOTH_ALPHA = 0.9
 model = FGINet().to(DEVICE).eval()
 ckpt = torch.load(CKPT, map_location=DEVICE)
 if isinstance(ckpt, dict) and "model" in ckpt:
@@ -58,23 +58,69 @@ def crop_eyes(frame, face_mesh=face, img_size=224, margin=0.6):
     return canvas
 
 
-# ========== 캘리브레이션 지점 ==========
-A = None
+# ========== 캘리브레이션 ==========
+coefs = None
 calibrated = False
 
 # 1) 파일 있으면 바로 로드
 if os.path.exists(calib_file):
-    A = np.load(calib_file)
+    coefs = np.load(calib_file, allow_pickle=True)
     calibrated = True
     print("캘리브레이션 파일을 불러왔습니다!")
-margin = 0.01
-x_ratios = np.linspace(0 + margin, 1 - margin, 7)
-y_ratios = np.linspace(0 + margin, 1 - margin, 5)
+
+n_x = 5
+n_y = 3
+margin_x = 0.005
+margin_y = 0.01
+x_ratios = np.linspace(0 + margin_x, 1 - margin_x, n_x)
+y_ratios = np.linspace(0 + margin_y, 1 - margin_y, n_y)
 calib_targets = [(int(round(x * (W - 1))), int(round(y * (H - 1)))) for y in y_ratios for x in x_ratios]
+
+# ① 구석 4개
+corners = [
+    (2, 2),  # 좌상
+    (W - 3, 2),  # 우상
+    (2, H - 3),  # 좌하
+    (W - 3, H - 3),  # 우하
+]
+
+# ② 중앙 1개
+center = [(W // 2, H // 2)]
+
+# ③ 네 변 중간 4개
+middles = [
+    (W // 2, 0),  # 상단 중앙
+    (W // 2, H - 1),  # 하단 중앙
+    (0, H // 2),  # 좌측 중앙
+    (W - 1, H // 2),  # 우측 중앙
+]
+
+# ④ 합치기
+bonus_points = corners + center + middles
+
+# (2) **사이드 라인상 추가 포인트**
+N_SIDE = 3
+margin_side = 0.001
+# x만 변하고 y는 경계
+x_side_ratios = np.linspace(0 + margin_side, 1 - margin_side, N_SIDE)
+y_side_ratios = np.linspace(0 + margin_side, 1 - margin_side, N_SIDE)
+
+side_top = [(int(round(x * (W - 1))), 0) for x in x_side_ratios]
+side_bottom = [(int(round(x * (W - 1))), H - 1) for x in x_side_ratios]
+side_left = [(0, int(round(y * (H - 1)))) for y in y_side_ratios]
+side_right = [(W - 1, int(round(y * (H - 1)))) for y in y_side_ratios]
+
+side_points = side_top + side_bottom + side_left + side_right
+
+# (3) 합치고 중복 제거
+calib_targets = list({(int(x), int(y)) for (x, y) in calib_targets + bonus_points + side_points})
+
+# (4) 랜덤하게 순서 섞기
+random.shuffle(calib_targets)
 
 
 # ========== 캘리브레이션 함수 ==========
-def calibrate(cap, min_time=2, required_stable=20, std_threshold=30):
+def calibrate(cap, min_time=2, required_stable=20, std_threshold=25):
     preds, targets = [], []
     cv2.namedWindow("calib_full", cv2.WND_PROP_FULLSCREEN)
     cv2.setWindowProperty("calib_full", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
@@ -148,18 +194,32 @@ def calibrate(cap, min_time=2, required_stable=20, std_threshold=30):
     # 최소제곱 보정
     preds = np.array(preds)
     targets = np.array(targets)
-    ones = np.ones((preds.shape[0], 1))
-    X = np.hstack([preds, ones])
-    A, _, _, _ = np.linalg.lstsq(X, targets, rcond=None)
-    return A
+
+    def poly_features(arr):
+        x, y = arr[:, 0], arr[:, 1]
+        return np.stack([np.ones_like(x), x, y, x**2, y**2, x * y], axis=1)
+
+    X_poly = poly_features(preds)
+    coef_x, _, _, _ = np.linalg.lstsq(X_poly, targets[:, 0], rcond=None)
+    coef_y, _, _, _ = np.linalg.lstsq(X_poly, targets[:, 1], rcond=None)
+    return (coef_x, coef_y)
 
 
-def apply_calib(pred, A):
-    # pred: (2,), A: (3,2)
-    x = np.append(pred, 1.0)  # [dx, dy, 1]
-    offset = np.dot(x, A)  # (2,) [tx-cx, ty-cy]
-    screen_xy = np.array([cx, cy]) + offset
+def apply_calib_poly(pred, coefs):
+    dx, dy = pred[0], pred[1]
+    feat = np.array([1.0, dx, dy, dx * dx, dy * dy, dx * dy])
+    tx = np.dot(feat, coefs[0])
+    ty = np.dot(feat, coefs[1])
+    screen_xy = np.array([cx, cy]) + np.array([tx, ty])
     return screen_xy
+
+
+# def apply_calib(pred, A):
+#     # pred: (2,), A: (3,2)
+#     x = np.append(pred, 1.0)  # [dx, dy, 1]
+#     offset = np.dot(x, A)  # (2,) [tx-cx, ty-cy]
+#     screen_xy = np.array([cx, cy]) + offset
+#     return screen_xy
 
 
 def draw_face_body_mask(img, alpha=0.7, face_radius_ratio=0.34, body_width_ratio=0.4, body_height_ratio=0.3):
@@ -190,7 +250,7 @@ def draw_face_body_mask(img, alpha=0.7, face_radius_ratio=0.34, body_width_ratio
 
 # ========== 실시간 루프 ==========
 def main():
-    global A, calibrated  # 이 줄 추가
+    global coefs, calibrated  # 이 줄 추가
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     prev = np.array([0.0, 0.0], dtype=np.float32)
     print("[i] c 키를 누르면 캘리브레이션 시작")
@@ -204,8 +264,8 @@ def main():
         key = cv2.waitKey(1)
         # 1. c키: 새 캘리브레이션
         if key == ord("c"):
-            A = calibrate(cap)
-            np.save(calib_file, A)
+            coefs = calibrate(cap)
+            np.save(calib_file, coefs)
             calibrated = True
             print("캘리브레이션 완료! 실시간 추적 시작")
             time.sleep(0.5)
@@ -214,7 +274,7 @@ def main():
         # 2. 스페이스바: 파일 있으면 바로 불러와서 실시간 추적
         if key == ord(" "):
             if os.path.exists(calib_file):
-                A = np.load(calib_file)
+                coefs = np.load(calib_file, allow_pickle=True)
                 calibrated = True
                 print("이전 캘리브레이션 불러옴! 실시간 추적 시작")
                 time.sleep(0.3)
@@ -236,7 +296,7 @@ def main():
         prev = smoothed
 
         # 보정 적용
-        screen_xy = apply_calib(smoothed, A)
+        screen_xy = apply_calib_poly(smoothed, coefs)
         x_px = np.clip(int(screen_xy[0]), 5, W - 5)
         y_px = np.clip(int(screen_xy[1]), 5, H - 5)
         pyautogui.moveTo(x_px, y_px, _pause=False)
