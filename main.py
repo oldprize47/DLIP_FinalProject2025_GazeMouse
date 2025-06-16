@@ -54,7 +54,7 @@ LEFT_EYE = [33, 160, 158, 133, 153, 144]
 RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 EAR_THRESHOLD = 0.20
 FIX_RADIUS = 60  # 마우스 고정 원 반경(px)
-FIX_TIME = 1  # 고정 트리거 시간(초)
+FIX_TIME = 1.5  # 고정 트리거 시간(초)
 UNLOCK_EYE_TIME = 1.0  # 눈 감고 있을 때 해제 시간(초) (1초로 변경)
 BLINK_COOLTIME = 1  # 클릭 쿨타임(초)
 CONSEC_FRAMES = 2  # 블링크 프레임
@@ -306,8 +306,9 @@ def main():
     fix_center = stay_timer = None
     fixed = False
     unlock_eye_timer = None
-
+    t0 = time.time()
     blink_count = frame_counter = 0
+    # fps_count = 0
     last_blink_time = 0
 
     print("[i] c: 새 캘리브레이션  |  space: 저장된 값 사용  |  esc: 종료")
@@ -319,7 +320,7 @@ def main():
         frame = cv2.flip(frame, 1)
         key = cv2.waitKey(1) & 0xFF
         disp = draw_face_body_mask(frame, alpha=0.68)
-
+        # fps_count += 1
         # ───────── 단축키 ─────────
         if key == ord("c"):
             coefs = calibrate(cap)
@@ -399,22 +400,32 @@ def main():
             if l_ear < EAR_THRESHOLD and r_ear < EAR_THRESHOLD:
                 frame_counter += 1
             else:
-                if frame_counter >= CONSEC_FRAMES and time.time() - last_blink_time > BLINK_COOLTIME:
-                    pyautogui.click()
-                    blink_count += 1
-                    last_blink_time = time.time()
-                    # 클릭 후 즉시 고정 해제
-                    fixed = False
-                    fix_center = None
-                    unlock_eye_timer = None
-                    print(">> 블링크 클릭 후 고정 해제")
+                # 눈을 뜨면 frame_counter 초기화
                 frame_counter = 0
 
+            # 클릭 조건: 연속 감김 + 쿨타임 + 아직 클릭 안함
+            if frame_counter >= CONSEC_FRAMES and time.time() - last_blink_time > BLINK_COOLTIME:
+                pyautogui.click()
+                blink_count += 1
+                last_blink_time = time.time()
+                # 클릭 후 즉시 고정 해제
+                fixed = False
+                fix_center = None
+                unlock_eye_timer = None
+                print(">> 블링크 클릭 후 고정 해제")
+                # 추가: 눈을 뜰 때까지 frame_counter를 -999로 설정해서 재클릭 방지
+                frame_counter = -999
+
+            # 만약 눈을 뜨면 frame_counter가 -999여도 0으로 복구됨
+            if l_ear >= EAR_THRESHOLD or r_ear >= EAR_THRESHOLD:
+                if frame_counter < 0:
+                    frame_counter = 0
+
             # 텍스트 디버그
-            tx, gap = frame.shape[1] - 240, 45
-            cv2.putText(frame, f"Blinks: {blink_count}", (tx, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, f"L EAR: {l_ear:.2f}", (tx - 30, 30 + gap * 2), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-            cv2.putText(frame, f"R EAR: {r_ear:.2f}", (tx - 30, 30 + gap * 3), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 128, 255), 2)
+            # tx, gap = frame.shape[1] - 240, 45
+            # cv2.putText(frame, f"Blinks: {blink_count}", (tx, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            # cv2.putText(frame, f"L EAR: {l_ear:.2f}", (tx - 30, 30 + gap * 2), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+            # cv2.putText(frame, f"R EAR: {r_ear:.2f}", (tx - 30, 30 + gap * 3), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 128, 255), 2)
 
         # ───────── 마우스 이동 ─────────
         if fixed and fix_center:
@@ -430,6 +441,11 @@ def main():
         disp = draw_face_body_mask(frame, alpha=0.68)
         cv2.imshow("gaze", disp)
 
+        # # ----- FPS 계산 ----------
+        # if time.time() - t0 >= 1.0:
+        #     print("fps:", fps_count)
+        #     fps_count = 0
+        #     t0 = time.time()
     cap.release()
     cv2.destroyAllWindows()
 

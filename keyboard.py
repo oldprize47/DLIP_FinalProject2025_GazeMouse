@@ -4,12 +4,12 @@ import pyautogui
 
 def type_letter(letter):
     entry.insert(tk.END, letter)
-    pyautogui.write(letter)
+    # pyautogui.write(letter)
 
 
 def type_space():
     entry.insert(tk.END, " ")
-    pyautogui.write(" ")
+    # pyautogui.write(" ")
 
 
 def clear_entry():
@@ -20,7 +20,7 @@ def backspace():
     current = entry.get()
     if current:
         entry.delete(len(current) - 1, tk.END)
-        pyautogui.press("backspace")
+        # pyautogui.press("backspace")
 
 
 # 모니터 크기 측정
