@@ -1,10 +1,12 @@
-# 파일명: make_csv_mpiigaze.py
-import os, pandas as pd
+# File: make_csv_mpiigaze.py
 
-# ── 실제 경로로 바꿔주세요 ───────────────────────────────
+import os
+import pandas as pd
+
+# Path to the root directory of the mpiigaze dataset
 data_root = r".\mpiigaze"
 
-# subject 폴더마다 해상도 매핑 (예시)
+# Mapping from subject folder name to its screen resolution (width, height)
 RES_MAP = {
     "p00": (1280, 800),
     "p01": (1440, 900),
@@ -24,8 +26,10 @@ RES_MAP = {
 }
 
 rows = []
+
 for subj in sorted(os.listdir(data_root)):
     subj_dir = os.path.join(data_root, subj)
+    # Skip if not a subject directory or not in RES_MAP
     if not os.path.isdir(subj_dir) or subj not in RES_MAP:
         continue
 
@@ -45,11 +49,11 @@ for subj in sorted(os.listdir(data_root)):
                 if idx >= len(imgs):
                     break
                 vals = line.strip().split()
-                sx = float(vals[24])
-                sy = float(vals[25])
-                sx = (W - 1) - sx  # ← x좌표 반전!
-                dx = sx - cx  # 중앙 기준 x 오프셋
-                dy = sy - cy  # 중앙 기준 y 오프셋
+                sx = float(vals[24])  # Screen x-coordinate
+                sy = float(vals[25])  # Screen y-coordinate
+                sx = (W - 1) - sx  # Flip x (horizontal mirroring)
+                dx = sx - cx  # x-offset from center
+                dy = sy - cy  # y-offset from center
 
                 rows.append(
                     {
@@ -65,6 +69,7 @@ for subj in sorted(os.listdir(data_root)):
                     }
                 )
 
+# Save as CSV
 df = pd.DataFrame(rows)
 out_csv = os.path.join(data_root, "mpiigaze_labels_center_px.csv")
 df.to_csv(out_csv, index=False)

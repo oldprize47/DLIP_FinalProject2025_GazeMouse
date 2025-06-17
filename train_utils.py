@@ -1,4 +1,5 @@
-# train_utils.py
+# File: train_utils.py
+
 import os
 import numpy as np
 import pandas as pd
@@ -9,10 +10,13 @@ from tqdm import tqdm
 import json
 from eye_patch_dataset import EyePatchDataset, EyePatchDatasetInference
 
-scaler = GradScaler()
+scaler = GradScaler()  # Mixed-precision gradient scaler
 
 
 def set_seed(seed):
+    """
+    Set random seed for reproducibility (numpy, torch, random).
+    """
     import random
 
     random.seed(seed)
@@ -21,6 +25,10 @@ def set_seed(seed):
 
 
 def split_dataset(csv_path, split, seed):
+    """
+    Split dataset indices for train/val/test according to split ratio.
+    Returns dict with index arrays for each split.
+    """
     df = pd.read_csv(csv_path)
     idx = np.arange(len(df))
     np.random.default_rng(seed).shuffle(idx)
@@ -36,16 +44,23 @@ def split_dataset(csv_path, split, seed):
 
 
 def get_loaders(csv_path, split, batch_size, seed, split_json):
+    """
+    Returns PyTorch DataLoaders for train, val, test splits.
+    Also saves split indices to JSON for reproducibility.
+    """
     splits = split_dataset(csv_path, split, seed)
     with open(split_json, "w") as f:
         json.dump({k: v.tolist() for k, v in splits.items()}, f, indent=2)
     ds_train = EyePatchDataset(csv_path)
     ds_eval = EyePatchDatasetInference(csv_path)
     mk = lambda ds, ids, shuf: DataLoader(Subset(ds, ids), batch_size, shuf, num_workers=4, prefetch_factor=2, pin_memory=True, persistent_workers=True)
-    return mk(ds_train, splits["train"], True), mk(ds_eval, splits["val"], False), mk(ds_eval, splits["test"], False)
+    return (mk(ds_train, splits["train"], True), mk(ds_eval, splits["val"], False), mk(ds_eval, splits["test"], False))
 
 
 def train_one_epoch(model, loader, optimizer, device, train=True):
+    """
+    Train or evaluate the model for one epoch. Returns average loss.
+    """
     model.train(train)
     total_loss = 0.0
     n = 0
@@ -65,6 +80,9 @@ def train_one_epoch(model, loader, optimizer, device, train=True):
 
 
 def save_ckpt(model, optimizer, epoch, best, ckpt_path):
+    """
+    Save model & optimizer state (checkpoint) to file.
+    """
     torch.save(
         {
             "epoch": epoch,
@@ -77,6 +95,10 @@ def save_ckpt(model, optimizer, epoch, best, ckpt_path):
 
 
 def load_ckpt(model, optimizer, ckpt_path, device, lr_head, lr_backbone):
+    """
+    Load checkpoint. Resets optimizer learning rates.
+    Returns (start_epoch, best_metric).
+    """
     start_epoch, best = 0, float("inf")
     if os.path.isfile(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location=device)
@@ -94,9 +116,13 @@ def load_ckpt(model, optimizer, ckpt_path, device, lr_head, lr_backbone):
 
 
 def load_pretrained_weights(model, pretrained_path, device="cpu", verbose=True):
+    """
+    Load pretrained weights from file into model.
+    Handles both state_dict and checkpoint dict format.
+    """
     if pretrained_path and os.path.isfile(pretrained_path):
         state_dict = torch.load(pretrained_path, map_location=device)
-        # checkpoint dict or pure state_dict 모두 대응
+        # Accept both plain state_dict or dict with 'model' key
         if isinstance(state_dict, dict) and "model" in state_dict:
             state_dict = state_dict["model"]
         model.load_state_dict(state_dict, strict=False)

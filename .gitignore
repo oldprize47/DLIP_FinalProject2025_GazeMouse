@@ -1,18 +1,19 @@
-**/mpiigaze
-*.pt
-*.pth
+# Data directories and large files
+**/mpiigaze/
+**/RT_GENE/
+**/recalib_patches*/
+**/others/
+**/models/
+**.csv
+**.npy
+**.json
+**.pt
+**.pth
 **.png
-**/RT_GENE
-**/recalib_patches
-**/recalib_patches_SH
-**/recalib_patches_SW
-*.csv
-**/others
-**/models
-*.json
-**/.vscode
-*.npy
-# Python cache
+# IDE and config files
+**/.vscode/
+
+# Python bytecode and cache
 __pycache__/
 **/__pycache__/
-*.py[cod]
+**.py[cod]

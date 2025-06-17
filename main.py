@@ -1,3 +1,5 @@
+# File: main.py
+
 import time
 import cv2
 import numpy as np
@@ -7,21 +9,51 @@ import mediapipe as mp
 import pyautogui
 from gaze_utils import load_model, get_tf, crop_eyes, LEFT_EYE, RIGHT_EYE, calculate_ear, calibrate, load_calibration, save_calibration, apply_calib_linear, is_inside_circle, draw_face_body_mask
 
+# ----------------- Global Config -----------------
 
-# ────────── 메인 루프 ──────────
-def main(calib_file="calib_SH.npy", CKPT="3finetuned_SH.pth", SMOOTH_ALPHA=0.95, FIX_RADIUS=60, FIX_TIME=1.5, UNLOCK_EYE_TIME=1.5, BLINK_COOLTIME=1, CONSEC_FRAMES=2, EAR_THRESHOLD=0.20, CALIB_STD_THRESHOLD=35, device=None):
+CALIB_FILE = "calib_SH.npy"  # Calibration file path
+CKPT = "finetuned_SH.pth"  # Model checkpoint path
+SMOOTH_ALPHA = 0.95  # Smoothing factor for gaze output (0~1, higher = smoother)
+FIX_RADIUS = 60  # Radius (pixels) for fixation detection
+FIX_TIME = 1.5  # Time (sec) required to fixate before locking
+UNLOCK_EYE_TIME = 1.5  # Time (sec) after fixation before unlocking by blink
+BLINK_COOLTIME = 1  # Minimum interval (sec) between allowed blinks/clicks
+CONSEC_FRAMES = 2  # Number of consecutive frames to confirm a blink
+EAR_THRESHOLD = 0.20  # Eye Aspect Ratio threshold for blink detection
+CALIB_STD_THRESHOLD = 35  # Standard deviation threshold for calibration stability
+WIN_NAME = "gaze"  # OpenCV window name
+
+# --------- UI size config (adapts to screen ratio) ----------
+W, H = pyautogui.size()  # Screen width, height
+ASPECT = W / H  # Screen aspect ratio (width/height)
+CENTER_BASE = 800  # Base size for main window (height)
+SMALL_BASE = 80  # Base size for small window (height)
+CENTER_SIZE = (int(CENTER_BASE * ASPECT), int(CENTER_BASE))  # Main window size (w, h)
+SMALL_SIZE = (int(SMALL_BASE * ASPECT), int(SMALL_BASE))  # Small window size (w, h)
+SMALL_X = 0  # X position for small window (left edge)
+MARGIN = 60  # Margin from bottom edge for small window
+SMALL_Y = max(0, H - SMALL_SIZE[1] - MARGIN)  # Y position for small window (bottom, with margin)
+CENTER_X = W // 2 - CENTER_SIZE[0] // 2  # Main window X (centered)
+CENTER_Y = H // 2 - CENTER_SIZE[1] // 2  # Main window Y (centered)
+# --------------------------------------------------
+
+
+def main(calib_file=CALIB_FILE, CKPT=CKPT, SMOOTH_ALPHA=SMOOTH_ALPHA, FIX_RADIUS=FIX_RADIUS, FIX_TIME=FIX_TIME, UNLOCK_EYE_TIME=UNLOCK_EYE_TIME, BLINK_COOLTIME=BLINK_COOLTIME, CONSEC_FRAMES=CONSEC_FRAMES, EAR_THRESHOLD=EAR_THRESHOLD, CALIB_STD_THRESHOLD=CALIB_STD_THRESHOLD, device=None):
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     model = load_model(CKPT, device)
     tf = get_tf()
-    W, H = pyautogui.size()
     cx, cy = W // 2, H // 2
-
-    # 캘리브레이션 정보 불러오기
     coefs = load_calibration(calib_file)
     calibrated = coefs is not None
 
+    show_small = False
+
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WIN_NAME, *CENTER_SIZE)
+    cv2.moveWindow(WIN_NAME, CENTER_X, CENTER_Y)
+    cv2.setWindowProperty(WIN_NAME, cv2.WND_PROP_TOPMOST, 1)
 
     prev = np.zeros(2, np.float32)
     fix_center = stay_timer = last_free_pos = fixed_since = None
@@ -32,41 +64,45 @@ def main(calib_file="calib_SH.npy", CKPT="3finetuned_SH.pth", SMOOTH_ALPHA=0.95,
     mp_face = mp.solutions.face_mesh
     face_mesh = mp_face.FaceMesh(static_image_mode=False, max_num_faces=1, refine_landmarks=True)
 
-    print("[i] c: 새 캘리브레이션  |  space: 저장된 값 사용  |  esc: 종료")
+    print("\n\n[i] c: Calibrate | space: Load calibration | m: Move window | esc: Quit")
 
     while True:
         ret, frame = cap.read()
         if not ret:
             continue
         frame = cv2.flip(frame, 1)
+        disp = cv2.resize(frame, CENTER_SIZE)
         key = cv2.waitKey(1) & 0xFF
-        disp = draw_face_body_mask(frame, alpha=0.68)
+
+        # -------- Hotkeys --------
         if key == ord("c"):
-            coefs = calibrate(cap, model, tf, (W, H), cx, cy, device, std_threshold=CALIB_STD_THRESHOLD)
+            # Start calibration
+            coefs = calibrate(cap, model, tf, (W, H), cx, cy, device, face_mesh, std_threshold=CALIB_STD_THRESHOLD)
             save_calibration(calib_file, coefs)
             calibrated = True
-            print(">> 캘리브레이션 완료")
+            print(">> Calibration completed")
             time.sleep(0.4)
             continue
         elif key == ord(" "):
+            # Load calibration file
             coefs = load_calibration(calib_file)
             calibrated = coefs is not None
-            if calibrated:
-                print(">> 기존 캘리브레이션 로드")
-            else:
-                print("저장된 캘리브레이션 없음")
+            print(">> Calibration loaded" if calibrated else "No calibration found")
             time.sleep(0.3)
             continue
-        elif key == 27:  # ESC
+        elif key == ord("m"):
+            # Toggle between main/small display window
+            show_small = not show_small
+        elif key == 27:  # ESC to quit
             break
 
         if not calibrated or coefs is None:
-            cv2.imshow("gaze", disp)
+            cv2.imshow(WIN_NAME, disp)
             continue
 
         patch, lm_dict = crop_eyes(frame, face_mesh)
         if patch is None or patch.size == 0:
-            cv2.imshow("gaze", frame)
+            cv2.imshow(WIN_NAME, frame)
             continue
 
         pil = Image.fromarray(cv2.cvtColor(patch, cv2.COLOR_BGR2RGB))
@@ -80,6 +116,8 @@ def main(calib_file="calib_SH.npy", CKPT="3finetuned_SH.pth", SMOOTH_ALPHA=0.95,
         mouse_x, mouse_y = pyautogui.position()
         last_free_pos = (mouse_x, mouse_y)
         inside = is_inside_circle(fix_center, (mouse_x, mouse_y), FIX_RADIUS) if fix_center else False
+
+        # ------------- Fixation Logic -------------
         if not fixed:
             if fix_center is None or not inside:
                 fix_center = (mouse_x, mouse_y)
@@ -89,6 +127,7 @@ def main(calib_file="calib_SH.npy", CKPT="3finetuned_SH.pth", SMOOTH_ALPHA=0.95,
                 fixed_since = time.time()
                 pyautogui.moveTo(*last_free_pos, _pause=False)
 
+        # ------------- Blink Detection for Click -------------
         if lm_dict and all(i in lm_dict for i in LEFT_EYE + RIGHT_EYE):
             l_ear = calculate_ear(LEFT_EYE, lm_dict)
             r_ear = calculate_ear(RIGHT_EYE, lm_dict)
@@ -99,12 +138,10 @@ def main(calib_file="calib_SH.npy", CKPT="3finetuned_SH.pth", SMOOTH_ALPHA=0.95,
                 fix_center = None
                 fixed_since = None
                 continue
-
             if both_eyes_closed:
                 frame_counter += 1
             else:
                 frame_counter = 0
-
             if frame_counter >= CONSEC_FRAMES and time.time() - last_blink_time > BLINK_COOLTIME:
                 pyautogui.click()
                 blink_count += 1
@@ -112,29 +149,27 @@ def main(calib_file="calib_SH.npy", CKPT="3finetuned_SH.pth", SMOOTH_ALPHA=0.95,
                 fixed = False
                 fix_center = None
                 frame_counter = 0
+        # ----------- Mouse Movement -----------
         if fixed and last_free_pos:
             pyautogui.moveTo(*last_free_pos, _pause=False)
         else:
             pyautogui.moveTo(gx, gy, _pause=False)
 
         disp = draw_face_body_mask(frame, alpha=0.68)
-        cv2.imshow("gaze", disp)
+        # Handle window resize/move for small or main mode
+        if show_small:
+            cv2.resizeWindow(WIN_NAME, *SMALL_SIZE)
+            cv2.moveWindow(WIN_NAME, SMALL_X, SMALL_Y)
+            disp_to_show = cv2.resize(disp, SMALL_SIZE)
+        else:
+            cv2.resizeWindow(WIN_NAME, *CENTER_SIZE)
+            cv2.moveWindow(WIN_NAME, CENTER_X, CENTER_Y)
+            disp_to_show = cv2.resize(disp, CENTER_SIZE)
+        cv2.imshow(WIN_NAME, disp_to_show)
 
     cap.release()
     cv2.destroyAllWindows()
 
 
-# ────────── 파라미터만 바꿔 실행 ──────────
 if __name__ == "__main__":
-    main(
-        calib_file="calib_SH1.npy",  # 캘리브레이션 계수 저장/불러올 파일명 (npy)
-        CKPT="3finetuned_SH.pth",  # 모델 파라미터 파일명 (pth)
-        SMOOTH_ALPHA=0.95,  # 이전 프레임과 예측값을 섞는 smoothing 계수 (0~1, 클수록 부드럽지만 느림)
-        FIX_RADIUS=60,  # 마우스 고정 영역 반지름 (픽셀, 커질수록 더 넓은 영역에서 고정)
-        FIX_TIME=1.5,  # 고정되기까지 머무는 시간 (초) (이 시간 이상 같은 자리에 있으면 고정)
-        UNLOCK_EYE_TIME=1.5,  # 고정 상태에서 자동 해제되는 시간 (초, 예: 눈 감고 있거나 시간 경과시)
-        BLINK_COOLTIME=1,  # 블링크(눈깜빡임) 인식 후 다음 클릭까지 쿨타임 (초)
-        CONSEC_FRAMES=2,  # 눈 감은 프레임 연속 개수 (이상일 때만 클릭으로 간주)
-        EAR_THRESHOLD=0.20,  # 눈 감음(EAR) 판정 임계값 (낮을수록 예민)
-        CALIB_STD_THRESHOLD=35,  # 캘리브레이션 수렴 시 허용 분산(표준편차) 임계값 (작을수록 더 엄격하게 인식)
-    )
+    main()
