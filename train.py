@@ -1,6 +1,5 @@
 # File: train.py
 
-import os
 import torch
 from fginet import FGINet
 from train_utils import set_seed, get_loaders, train_one_epoch, save_ckpt, load_ckpt, load_pretrained_weights
