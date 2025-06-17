@@ -1,8 +1,8 @@
-# 파일명: make_csv_center.py
+# 파일명: make_csv_mpiigaze.py
 import os, pandas as pd
 
 # ── 실제 경로로 바꿔주세요 ───────────────────────────────
-data_root = r"C:\Users\Sangheon\source\repos\DLIP\DLIP_FinalProject2025_GazeMouse\mpiigaze"
+data_root = r".\mpiigaze"
 
 # subject 폴더마다 해상도 매핑 (예시)
 RES_MAP = {
@@ -47,6 +47,7 @@ for subj in sorted(os.listdir(data_root)):
                 vals = line.strip().split()
                 sx = float(vals[24])
                 sy = float(vals[25])
+                sx = (W - 1) - sx  # ← x좌표 반전!
                 dx = sx - cx  # 중앙 기준 x 오프셋
                 dy = sy - cy  # 중앙 기준 y 오프셋
 

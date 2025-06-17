@@ -1,4 +1,4 @@
-# 파일명: make_data.py
+# 파일명: make_csv_custom.py
 import os
 import cv2
 import numpy as np
