@@ -10,7 +10,9 @@
 **/others
 **/models
 *.json
-**/__pycache__
-*.pyc
 **/.vscode
 *.npy
+# Python cache
+# __pycache__/
+# **/__pycache__/
+# *.py[cod]
