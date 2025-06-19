@@ -5,11 +5,11 @@ from fginet import FGINet
 from train_utils import set_seed, get_loaders, train_one_epoch, save_ckpt, load_ckpt, load_pretrained_weights
 
 # --- Config (with detailed comments) ---
-CSV_PATH = "recalib_data_SH.csv"  # Path to training/inference CSV
-PRETRAINED_PTH = "Last_MPIIGAZE.pth"  # Initial (pretrained) weights
-CKPT_BEST = "3finetuned_SH.pth"  # Path to save the best checkpoint
+CSV_PATH = "p01.csv"  # Path to training/inference CSV
+PRETRAINED_PTH = "model_weights.pth"  # Initial (pretrained) weights
+CKPT_BEST = "model_weights.pth"  # Path to save the best checkpoint
 BATCH_SIZE = 16  # Mini-batch size
-EPOCHS = 150  # Maximum number of epochs
+EPOCHS = 0  # Maximum number of epochs
 SPLIT = (0.9, 0.05, 0.05)  # Data split ratio: (train, val, test)
 SEED = 42  # Random seed for reproducibility
 SPLIT_JSON = f"{SEED}_eye_patch_splits_train.json"  # Path to save split indices
@@ -39,10 +39,10 @@ def main():
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS - WARM_EPOCHS, eta_min=1e-5)
 
-    # (1) Load pretrained weights (if available)
+    # Load pretrained weights (if available)
     load_pretrained_weights(model, PRETRAINED_PTH, device)
 
-    # (2) Resume from checkpoint (if exists)
+    # Resume from checkpoint (if exists)
     start_epoch, best = load_ckpt(model, opt, CKPT_BEST, device, LR_HEAD, LR_BACKBONE)
 
     no_imp = 0  # Counter for early stopping
