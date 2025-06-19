@@ -97,6 +97,16 @@ def main(calib_file=CALIB_FILE, CKPT=CKPT, SMOOTH_ALPHA=SMOOTH_ALPHA, FIX_RADIUS
         elif key == ord("m"):
             # Toggle between main/small display window
             show_small = not show_small
+            # Handle window resize/move for small or main mode
+            if show_small:
+                cv2.resizeWindow(WIN_NAME, *SMALL_SIZE)
+                cv2.moveWindow(WIN_NAME, SMALL_X, SMALL_Y)
+                disp_to_show = cv2.resize(disp, SMALL_SIZE)
+            else:
+                cv2.resizeWindow(WIN_NAME, *CENTER_SIZE)
+                cv2.moveWindow(WIN_NAME, CENTER_X, CENTER_Y)
+                disp_to_show = cv2.resize(disp, CENTER_SIZE)
+
         elif key == 27:  # ESC to quit
             break
 
@@ -162,17 +172,7 @@ def main(calib_file=CALIB_FILE, CKPT=CKPT, SMOOTH_ALPHA=SMOOTH_ALPHA, FIX_RADIUS
         else:
             pyautogui.moveTo(gx, gy, _pause=False)
 
-        disp = draw_face_body_mask(frame, alpha=0.68)
-
-        # Handle window resize/move for small or main mode
-        if show_small:
-            cv2.resizeWindow(WIN_NAME, *SMALL_SIZE)
-            cv2.moveWindow(WIN_NAME, SMALL_X, SMALL_Y)
-            disp_to_show = cv2.resize(disp, SMALL_SIZE)
-        else:
-            cv2.resizeWindow(WIN_NAME, *CENTER_SIZE)
-            cv2.moveWindow(WIN_NAME, CENTER_X, CENTER_Y)
-            disp_to_show = cv2.resize(disp, CENTER_SIZE)
+        disp_to_show = draw_face_body_mask(frame, alpha=0.68)
         cv2.imshow(WIN_NAME, disp_to_show)
 
     cap.release()
