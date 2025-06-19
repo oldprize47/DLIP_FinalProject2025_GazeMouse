@@ -160,7 +160,7 @@ class FGINet(nn.Module):
 
 Follow the instructions to generate custom data (eye photo + X, Y coordinate labels) and create a csv file.
 
-- Settings block
+- **Settings block**
 
 ```python
 # ========== [1] Configuration ==========
@@ -172,7 +172,7 @@ ORDER_FILE = "targets_order.npy"  # File to save random order of targets
 # ========================================
 ```
 
-- Collecting data
+- **Collecting data**
 
 When you run the file, points like the ones shown below will appear. While fixating on a point, pressing the space bar will capture 10 images at short intervals.
 
@@ -253,7 +253,7 @@ Set the batch size to suit your own GPU (see the comments next to each setting f
 
 Optionally, if you have a pretrained, generalized model (for example, one trained on MPIIGaze), you can fine-tune it on your own data.
 
-- Hyperparameters and settings blocks
+- **Hyperparameters and settings blocks**
 
 ```python
 # --- Config (with detailed comments) ---
@@ -272,7 +272,7 @@ WARM_EPOCHS = 2  # Number of warmup epochs
 PATIENCE = 30  # Early stop if no improvement for this many epochs
 ```
 
-- Model training, validation, and testing
+- **Model training, validation, and testing**
 
 ```python
 # Split the CSV data into training, validation, and test sets, then create
@@ -334,7 +334,16 @@ Please refer to each parameter’s comment and tweak its value as needed:
 - **m**: Minimize the window and move it to the bottom-left
 - **Esc**: Exit the application
 
-- Settings block
+**Initial preprocessing and manipulation**
+
+- Calibration start screen![Image](https://github.com/user-attachments/assets/c578ddac-bdb8-46ea-840c-c204db02a487)
+
+- Calibration screen
+
+  | ![Image](https://github.com/user-attachments/assets/ca22ab2e-2588-4ff0-9718-7ce7f4d58c59) | ![Image](https://github.com/user-attachments/assets/d11c0165-0c87-48fe-a38d-314ba29a9a9e) |
+  | ------------------------------------------------------------ | ------------------------------------------------------------ |
+
+- **Settings block**
 
 ```python
 # ----------------- Global Config -----------------
@@ -362,15 +371,6 @@ SMALL_Y = max(0, H - SMALL_SIZE[1] - MARGIN)  # Y position for small window (bot
 CENTER_X = W // 2 - CENTER_SIZE[0] // 2  # Main window X (centered)
 CENTER_Y = H // 2 - CENTER_SIZE[1] // 2  # Main window Y (centered)
 ```
-
-- Initial preprocessing and manipulation
-
-  - Calibration start screen![Image](https://github.com/user-attachments/assets/c578ddac-bdb8-46ea-840c-c204db02a487)
-
-  - Calibration screen
-
-    | ![Image](https://github.com/user-attachments/assets/ca22ab2e-2588-4ff0-9718-7ce7f4d58c59) | ![Image](https://github.com/user-attachments/assets/d11c0165-0c87-48fe-a38d-314ba29a9a9e) |
-    | ------------------------------------------------------------ | ------------------------------------------------------------ |
 
 ```python
 # Load the trained model and the preprocessing transforms
@@ -405,7 +405,7 @@ while True:
         break
 ```
 
-- Gaze inference and mouse movement
+- **Gaze inference and mouse movement**
 
 ```python
 patch, lm_dict = crop_eyes(frame, face_mesh)  # Extract eye regions from the frame for inference
@@ -432,7 +432,7 @@ gx = int(np.clip(gaze_xy[0], 5, W - 5))
 gy = int(np.clip(gaze_xy[1], 5, H - 5))
 ```
 
-- Eye blink Click
+- **Eye blink Click**
 
 ```python
     # Save the current mouse position
@@ -488,7 +488,7 @@ gy = int(np.clip(gaze_xy[1], 5, H - 5))
 
 ```
 
-- User screen
+- **User screen**
 
 ```python
     # Overlay a mask for user customization
