@@ -1,4 +1,4 @@
-name: fgi
+name: Gaze_mouse_fgi
 channels:
   - pytorch
   - nvidia
