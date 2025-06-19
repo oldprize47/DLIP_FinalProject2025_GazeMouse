@@ -63,6 +63,10 @@
 
 ### 3. Tutorial Procedure
 
+#### Flow Chart
+
+
+
 #### Setting Environment
 
 **Anaconda Install**
@@ -312,6 +316,8 @@ print(f"\n=== Test MAE (px): {test_loss:.2f}")
 
 
 **STEP 3: Implementing gaze mouse with learned model(main.py)**
+
+![Image](https://github.com/user-attachments/assets/82edb1ab-fdc6-4cb1-8b41-291661018954)
 
 After completing training, run the `main.py` file to bring up a window like the one below.
 
