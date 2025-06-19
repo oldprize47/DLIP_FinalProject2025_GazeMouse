@@ -17,7 +17,6 @@ CSV_PATH = "p01.csv"  # Output label CSV file
 N = 200  # Total number of target points
 PATCH_PER_POINT = 10  # Number of images to save per point
 ORDER_FILE = "targets_order.npy"  # File to save random order of targets
-
 # ========================================
 
 
@@ -33,20 +32,23 @@ def main():
 
     # ===== [Random order & Resume management] =====
     if os.path.exists(ORDER_FILE):
-        targets_order = np.load(ORDER_FILE, allow_pickle=True)
+        targets_order, base_count = np.load(ORDER_FILE, allow_pickle=True)
         print(f"[Resume] Loaded random order ({len(targets_order)} points)")
         # Check for changed grid size/resolution
         if len(targets_order) != len(targets):
             print(f"[Warning] Current grid ({len(targets)}) and saved order ({len(targets_order)}) are different.")
             print("Complete your previous session before changing N/grid/settings.")
             exit(1)
-        targets = targets_order.tolist()
+        targets = targets_order
+        base_count = int(base_count)
+        idx = (len(patches) - base_count) // PATCH_PER_POINT
     else:
         random.shuffle(targets)
-        np.save(ORDER_FILE, np.array(targets, dtype=object))
-        print(f"[New] Random order file created ({len(targets)} points)")
+        base_count = len(patches)
+        np.save(ORDER_FILE, np.array([targets, base_count], dtype=object))
+        print(f"[New] Random order created ({len(targets)} pts), base_count={base_count}")
+        idx = 0
 
-    idx = len(patches) // PATCH_PER_POINT  # Resume support
     cx, cy = W // 2 - 100, H // 2
 
     while idx < len(targets):
