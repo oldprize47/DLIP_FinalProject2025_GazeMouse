@@ -6,7 +6,7 @@
 
 ------
 
-**Date: **2025-06-20
+**Date:** 2025-06-20
 
 **Author:** Sangheon Park(21800275), Sunwoo Kim(22000090)
 
