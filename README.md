@@ -178,7 +178,7 @@ ORDER_FILE = "targets_order.npy"  # File to save random order of targets
 
 - **Collecting data**
 
-When you run the file, points like the ones shown below will appear. While fixating on a point, pressing the space bar will capture 10 images at short intervals.
+When you run the file(make_csv_custom.py), points like the ones shown below will appear. While fixating on a point, pressing the space bar will capture 10 images at short intervals.
 
 If you accidentally capture images without proper fixation, you can press the “z” key to cancel.
 
@@ -251,7 +251,7 @@ if os.path.exists(ORDER_FILE):
 
 **STEP 2: Model learning (train.py)**
 
-Before running, rename the saved CSV file and the `.pth` file (where the weights will be stored) as needed.
+Before running, update the CSV_PATH and CKPT_BEST settings at the top of train.py so they point to your CSV data file and to the location where the .pth weights will be stored, as needed.
 
 Set the batch size to suit your own GPU (see the comments next to each setting for guidance).
 
@@ -327,6 +327,21 @@ Please refer to each parameter’s comment and tweak its value as needed:
 - If the mouse cursor is too jittery → increase the `SMOOTH_ALPHA` value.
 - If, during calibration, the circle isn’t reliably detected as green → increase the `CALIB_STD_THRESHOLD` value.
 
+After calibration completes, the mouse cursor will track your gaze and move accordingly. The click function works as follows:
+
+- When you fix your gaze on a single point for a certain duration (default: 1.5 seconds), the cursor will lock in place.
+
+- While locked, blinking both eyes will trigger a click.
+
+- After clicking, the cursor unlocks immediately.
+
+- If you don’t want to click, simply wait for the same duration (default: 1.5 seconds) without blinking.
+
+The relevant parameters are:
+```python
+FIX_TIME = 1.5         # Time (sec) required to fixate before locking
+UNLOCK_EYE_TIME = 1.5  # Time (sec) after fixation before unlocking by blink
+```
 ![Image](https://github.com/user-attachments/assets/99c4dc28-b8c9-4c4a-ab44-1460ed514d27)
 
 ```cmd
